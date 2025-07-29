@@ -242,27 +242,57 @@ function calculatePeakDelays() {
     const datasets = chartData.datasets;
     const labels = chartData.labels;
     
+    // 改进的峰值检测算法
+    function findPeaks(data, threshold = 0.1) {
+        const peaks = [];
+        const maxVal = Math.max(...data);
+        const minHeight = maxVal * threshold;
+        
+        for (let i = 1; i < data.length - 1; i++) {
+            if (data[i] > minHeight && data[i] > data[i-1] && data[i] > data[i+1]) {
+                peaks.push(i);
+            }
+        }
+        return peaks;
+    }
+    
     // 找到各传感器的峰值时间
     const peakTimes = datasets.map(dataset => {
-        const maxIndex = dataset.data.indexOf(Math.max(...dataset.data));
-        return labels[maxIndex];
+        const peaks = findPeaks(dataset.data);
+        if (peaks.length > 0) {
+            // 使用第一个峰值
+            return labels[peaks[0]];
+        } else {
+            // 如果没有峰值，使用最大值
+            const maxIndex = dataset.data.indexOf(Math.max(...dataset.data));
+            return labels[maxIndex];
+        }
     });
     
-    // 计算延迟
+    // 计算延迟 - 只计算正延迟
     const delays = [];
     for (let i = 1; i < peakTimes.length; i++) {
-        delays.push(peakTimes[i] - peakTimes[i-1]);
+        const delay = peakTimes[i] - peakTimes[i-1];
+        // 只保留合理的正延迟值
+        if (delay > 0 && delay < 1000) { // 最大1秒
+            delays.push(delay);
+        } else {
+            delays.push(0); // 无效延迟设为0
+        }
     }
     
     // 更新显示
     if (delays.length >= 1) {
-        document.getElementById('waist-shoulder-delay').textContent = delays[0] + 'ms';
+        const delay1 = delays[0] > 0 ? delays[0].toFixed(1) : '0.0';
+        document.getElementById('waist-shoulder-delay').textContent = delay1 + 'ms';
     }
     if (delays.length >= 2) {
-        document.getElementById('shoulder-wrist-delay').textContent = delays[1] + 'ms';
+        const delay2 = delays[1] > 0 ? delays[1].toFixed(1) : '0.0';
+        document.getElementById('shoulder-wrist-delay').textContent = delay2 + 'ms';
     }
     if (delays.length >= 3) {
-        document.getElementById('wrist-racket-delay').textContent = delays[2] + 'ms';
+        const delay3 = delays[2] > 0 ? delays[2].toFixed(1) : '0.0';
+        document.getElementById('wrist-racket-delay').textContent = delay3 + 'ms';
     }
 }
 

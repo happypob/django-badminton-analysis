@@ -1,0 +1,21 @@
+# Django项目依赖包
+Django>=5.2.4
+requests>=2.31.0
+
+# 科学计算库
+numpy>=1.24.0
+scipy>=1.11.0
+matplotlib>=3.7.0
+
+# 数据处理
+pandas>=2.0.0
+
+# 图像处理
+Pillow>=10.0.0
+
+# 开发工具
+python-dotenv>=1.0.0
+
+# 测试工具
+pytest>=7.4.0
+pytest-django>=4.5.0 

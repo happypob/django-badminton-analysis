@@ -1,0 +1,143 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}分析结果列表{% endblock %}
+
+{% block content %}
+<div class="module">
+    <h2>分析结果列表</h2>
+    
+    <!-- 筛选表单 -->
+    <div class="filter-form" style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+        <form method="get" style="display: flex; gap: 15px; align-items: end;">
+            <div>
+                <label for="user">用户筛选:</label>
+                <input type="text" name="user" id="user" value="{{ user_filter }}" placeholder="输入openid">
+            </div>
+            <div>
+                <label for="date_from">开始日期:</label>
+                <input type="date" name="date_from" id="date_from" value="{{ date_from }}">
+            </div>
+            <div>
+                <label for="date_to">结束日期:</label>
+                <input type="date" name="date_to" id="date_to" value="{{ date_to }}">
+            </div>
+            <div>
+                <button type="submit" class="button">筛选</button>
+                <a href="{% url 'admin:analysis_list' %}" class="button">清除筛选</a>
+            </div>
+        </form>
+    </div>
+    
+    {% if analysis_results %}
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f1f1f1;">
+                    <th style="padding: 10px; border: 1px solid #ddd;">会话ID</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">用户</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">分析时间</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">能量比</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">相位延迟</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for result in analysis_results %}
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 10px; border: 1px solid #ddd;">
+                        {{ result.session.id }}
+                    </td>
+                    <td style="padding: 10px; border: 1px solid #ddd;">
+                        {{ result.session.user.openid|default:"未知用户" }}
+                    </td>
+                    <td style="padding: 10px; border: 1px solid #ddd;">
+                        {{ result.analysis_time|date:"Y-m-d H:i:s" }}
+                    </td>
+                    <td style="padding: 10px; border: 1px solid #ddd;">
+                        {{ result.energy_ratio|floatformat:3 }}
+                    </td>
+                    <td style="padding: 10px; border: 1px solid #ddd;">
+                        {% if result.phase_delay %}
+                            {% for key, value in result.phase_delay.items %}
+                                {{ key }}: {{ value|floatformat:3 }}s<br>
+                            {% endfor %}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td style="padding: 10px; border: 1px solid #ddd;">
+                        <a href="{% url 'admin:analysis_result_with_id' result.session.id %}" 
+                           class="button" style="background: #007bff; color: white; padding: 5px 10px; text-decoration: none; border-radius: 3px;">
+                            查看详情
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        <!-- 分页 -->
+        {% if page_obj.has_other_pages %}
+        <div class="pagination" style="margin-top: 20px; text-align: center;">
+            {% if page_obj.has_previous %}
+                <a href="?page=1{% if user_filter %}&user={{ user_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="button">&laquo; 首页</a>
+                <a href="?page={{ page_obj.previous_page_number }}{% if user_filter %}&user={{ user_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="button">上一页</a>
+            {% endif %}
+            
+            <span class="current">
+                第 {{ page_obj.number }} 页，共 {{ page_obj.paginator.num_pages }} 页
+            </span>
+            
+            {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}{% if user_filter %}&user={{ user_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="button">下一页</a>
+                <a href="?page={{ page_obj.paginator.num_pages }}{% if user_filter %}&user={{ user_filter }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="button">末页 &raquo;</a>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+        <div style="margin-top: 20px; color: #666;">
+            共找到 {{ page_obj.paginator.count }} 条分析结果
+        </div>
+        
+    {% else %}
+        <div style="text-align: center; padding: 40px; color: #666;">
+            <p>暂无分析结果</p>
+            <p><a href="{% url 'admin:upload_mat' %}" class="button">上传.mat文件</a></p>
+        </div>
+    {% endif %}
+</div>
+
+<style>
+.filter-form input, .filter-form select {
+    padding: 5px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    margin-left: 5px;
+}
+
+.button {
+    background: #007bff;
+    color: white;
+    padding: 8px 15px;
+    text-decoration: none;
+    border-radius: 3px;
+    border: none;
+    cursor: pointer;
+    margin: 0 5px;
+}
+
+.button:hover {
+    background: #0056b3;
+}
+
+.pagination .button {
+    display: inline-block;
+    margin: 0 5px;
+}
+
+.current {
+    margin: 0 15px;
+    font-weight: bold;
+}
+</style>
+{% endblock %} 

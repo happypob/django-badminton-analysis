@@ -1,0 +1,113 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}上传.mat文件{% endblock %}
+
+{% block content %}
+<div class="module">
+    <h2>上传.mat文件进行分析</h2>
+    
+    {% if messages %}
+    <ul class="messagelist">
+        {% for message in messages %}
+        <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+    
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <table>
+            <tr>
+                <td><label for="openid">选择用户:</label></td>
+                <td>
+                    <select name="openid" id="openid" required>
+                        <option value="">请选择用户</option>
+                        {% for user in users %}
+                        <option value="{{ user.openid }}">{{ user.openid }} ({{ user.user.username }})</option>
+                        {% endfor %}
+                    </select>
+                </td>
+            </tr>
+            <tr>
+                <td><label for="mat_file">选择.mat文件:</label></td>
+                <td>
+                    <input type="file" name="mat_file" id="mat_file" accept=".mat" required>
+                </td>
+            </tr>
+            <tr>
+                <td colspan="2">
+                    <input type="submit" value="上传并分析" class="default">
+                </td>
+            </tr>
+        </table>
+    </form>
+    
+    <div style="margin-top: 20px;">
+        <h3>使用说明:</h3>
+        <ul>
+            <li>请选择要关联的用户openid</li>
+            <li>选择包含传感器数据的.mat文件</li>
+            <li>文件应包含'allData'字段</li>
+            <li>数据格式: [设备ID, 时间戳, 加速度XYZ, 角速度XYZ, 角度XYZ]</li>
+        </ul>
+    </div>
+</div>
+
+<style>
+    .module {
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 20px;
+        margin: 20px 0;
+    }
+    
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    td {
+        padding: 10px;
+        border-bottom: 1px solid #eee;
+    }
+    
+    input[type="submit"] {
+        background: #79aec8;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    
+    input[type="submit"]:hover {
+        background: #417690;
+    }
+    
+    .messagelist {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 20px 0;
+    }
+    
+    .messagelist li {
+        padding: 10px;
+        margin: 5px 0;
+        border-radius: 4px;
+    }
+    
+    .messagelist .error {
+        background: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+    }
+    
+    .messagelist .success {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+</style>
+{% endblock %} 

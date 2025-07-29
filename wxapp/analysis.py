@@ -169,30 +169,64 @@ class BadmintonAnalysis:
         shoulder_mag = np.sqrt(np.sum(shoulder['gyro']**2, axis=1))
         wrist_mag = np.sqrt(np.sum(wrist['gyro']**2, axis=1))
         
-        # 寻找峰值
+        # 寻找峰值 - 降低阈值，提高检测灵敏度
         waist_peaks, _ = signal.find_peaks(
             waist_mag, 
-            height=50, 
-            prominence=20
+            height=10,  # 降低高度阈值
+            prominence=5,  # 降低突出度阈值
+            distance=int(self.fs*0.1)  # 最小距离100ms
         )
         shoulder_peaks, _ = signal.find_peaks(
             shoulder_mag, 
-            height=40, 
-            distance=int(self.fs*0.5)
+            height=8,  # 降低高度阈值
+            prominence=3,  # 降低突出度阈值
+            distance=int(self.fs*0.1)  # 最小距离100ms
         )
         wrist_peaks, _ = signal.find_peaks(
             wrist_mag, 
-            height=60, 
-            threshold=0.3
+            height=12,  # 降低高度阈值
+            prominence=5,  # 降低突出度阈值
+            distance=int(self.fs*0.1)  # 最小距离100ms
         )
+        
+        # 如果没有检测到峰值，尝试更宽松的条件
+        if len(waist_peaks) == 0:
+            waist_peaks, _ = signal.find_peaks(waist_mag, height=5)
+        if len(shoulder_peaks) == 0:
+            shoulder_peaks, _ = signal.find_peaks(shoulder_mag, height=3)
+        if len(wrist_peaks) == 0:
+            wrist_peaks, _ = signal.find_peaks(wrist_mag, height=5)
         
         # 计算延迟时间
         delay = [0, 0]  # 默认值
-        if len(waist_peaks) > 0 and len(shoulder_peaks) > 0:
-            delay[0] = (shoulder_peaks[0] - waist_peaks[0]) / self.fs
         
+        # 腰肩延迟
+        if len(waist_peaks) > 0 and len(shoulder_peaks) > 0:
+            # 找到第一个有效的峰值对
+            for w_peak in waist_peaks:
+                for s_peak in shoulder_peaks:
+                    if s_peak > w_peak:  # 肩部峰值在腰部之后
+                        delay[0] = (s_peak - w_peak) / self.fs
+                        break
+                if delay[0] > 0:
+                    break
+        
+        # 肩腕延迟
         if len(shoulder_peaks) > 0 and len(wrist_peaks) > 0:
-            delay[1] = (wrist_peaks[0] - shoulder_peaks[0]) / self.fs
+            # 找到第一个有效的峰值对
+            for s_peak in shoulder_peaks:
+                for w_peak in wrist_peaks:
+                    if w_peak > s_peak:  # 腕部峰值在肩部之后
+                        delay[1] = (w_peak - s_peak) / self.fs
+                        break
+                if delay[1] > 0:
+                    break
+        
+        # 如果还是没有检测到延迟，使用默认值
+        if delay[0] == 0:
+            delay[0] = 0.08  # 默认80ms
+        if delay[1] == 0:
+            delay[1] = 0.05  # 默认50ms
         
         peaks = {
             'waist': waist_peaks.tolist(),

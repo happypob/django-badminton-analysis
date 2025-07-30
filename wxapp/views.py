@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+from django.db import models
 
 # Create your views here.
 
@@ -254,20 +255,28 @@ def esp32_upload_sensor_data(request):
                     return JsonResponse({
                         'error': f'Missing required field: {field}'
                     }, status=400)
+                
+                # 验证数组长度
+                if not isinstance(sensor_data[field], list) or len(sensor_data[field]) != 3:
+                    return JsonResponse({
+                        'error': f'Invalid {field} format. Must be [x, y, z] array'
+                    }, status=400)
             
             # 获取或创建会话
             session = None
             if session_id:
                 try:
-                    session = DataCollectionSession.objects.get(id=session_id)
+                    # 尝试将session_id转换为整数
+                    session_id_int = int(session_id)
+                    session = DataCollectionSession.objects.get(id=session_id_int)
                     if session.status not in ['collecting', 'calibrating']:
                         return JsonResponse({
                             'error': 'Session not active',
                             'session_status': session.status
                         }, status=400)
-                except DataCollectionSession.DoesNotExist:
+                except (ValueError, DataCollectionSession.DoesNotExist):
                     return JsonResponse({
-                        'error': 'Session not found'
+                        'error': 'Session not found or invalid session_id'
                     }, status=404)
             
             # 添加时间戳信息
@@ -288,13 +297,32 @@ def esp32_upload_sensor_data(request):
                 'data_id': sensor_data_obj.id,
                 'device_code': device_code,
                 'sensor_type': sensor_type,
-                'timestamp': sensor_data_obj.timestamp.isoformat()
+                'timestamp': sensor_data_obj.timestamp.isoformat(),
+                'sensor_data_summary': {
+                    'acc_magnitude': round((sensor_data['acc'][0]**2 + sensor_data['acc'][1]**2 + sensor_data['acc'][2]**2)**0.5, 2),
+                    'gyro_magnitude': round((sensor_data['gyro'][0]**2 + sensor_data['gyro'][1]**2 + sensor_data['gyro'][2]**2)**0.5, 2),
+                    'angle_range': {
+                        'x': round(sensor_data['angle'][0], 1),
+                        'y': round(sensor_data['angle'][1], 1),
+                        'z': round(sensor_data['angle'][2], 1)
+                    }
+                }
             }
             
             # 如果有关联的会话，添加会话信息
             if session:
                 response_data['session_id'] = session.id
                 response_data['session_status'] = session.status
+                
+                # 获取当前会话的所有传感器数据统计
+                session_stats = SensorData.objects.filter(session=session).aggregate(
+                    total_count=models.Count('id'),
+                    sensor_types=models.Count('sensor_type', distinct=True)
+                )
+                response_data['session_stats'] = {
+                    'total_data_points': session_stats['total_count'],
+                    'active_sensor_types': session_stats['sensor_types']
+                }
             
             return JsonResponse(response_data)
             
@@ -316,16 +344,22 @@ def esp32_upload_sensor_data(request):
                 'timestamp': 'string - ESP32时间戳 (可选)'
             },
             'data_format': {
-                'acc': '[x, y, z] - 加速度数据',
-                'gyro': '[x, y, z] - 角速度数据', 
-                'angle': '[x, y, z] - 角度数据'
+                'acc': '[x, y, z] - 加速度数据 (m/s²)',
+                'gyro': '[x, y, z] - 角速度数据 (rad/s)', 
+                'angle': '[x, y, z] - 角度数据 (度)'
             },
             'example': {
-                'device_code': 'esp32_001',
+                'device_code': 'esp32_waist_001',
                 'sensor_type': 'waist',
                 'data': '{"acc":[1.2,0.8,9.8],"gyro":[0.1,0.2,0.3],"angle":[45.0,30.0,60.0]}',
                 'session_id': '123',
                 'timestamp': '1640995200'
+            },
+            'multi_sensor_support': {
+                'waist': '腰部传感器 - 监测腰部旋转',
+                'shoulder': '肩部传感器 - 监测肩部屈伸',
+                'wrist': '腕部传感器 - 监测腕部动作',
+                'racket': '球拍传感器 - 监测球拍运动'
             }
         })
     
@@ -371,14 +405,16 @@ def esp32_batch_upload(request):
             session = None
             if session_id:
                 try:
-                    session = DataCollectionSession.objects.get(id=session_id)
+                    # 尝试将session_id转换为整数
+                    session_id_int = int(session_id)
+                    session = DataCollectionSession.objects.get(id=session_id_int)
                     if session.status not in ['collecting', 'calibrating']:
                         return JsonResponse({
                             'error': 'Session not active'
                         }, status=400)
-                except DataCollectionSession.DoesNotExist:
+                except (ValueError, DataCollectionSession.DoesNotExist):
                     return JsonResponse({
-                        'error': 'Session not found'
+                        'error': 'Session not found or invalid session_id'
                     }, status=404)
             
             # 批量存储数据

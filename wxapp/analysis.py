@@ -1,9 +1,9 @@
 try:
-    import numpy as np
+    import numpy as np  # type: ignore
     import json
-    from scipy import signal
-    from scipy.signal import savgol_filter
-    from scipy.integrate import cumtrapz
+    from scipy import signal  # type: ignore
+    from scipy.signal import savgol_filter  # type: ignore
+    from scipy.integrate import cumtrapz  # type: ignore
     import math
 except ImportError as e:
     print(f"Error importing scientific libraries: {e}")

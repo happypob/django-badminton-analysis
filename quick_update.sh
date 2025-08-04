@@ -13,7 +13,7 @@ git pull origin master
 
 # 3. 激活虚拟环境
 echo "🐍 激活虚拟环境..."
-source venv/bin/activate
+source venv38/bin/activate
 
 # 4. 安装/更新依赖
 echo "📚 更新Python依赖..."

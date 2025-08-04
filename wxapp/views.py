@@ -268,7 +268,7 @@ def esp32_upload_sensor_data(request):
                 try:
                     # 尝试将session_id转换为整数
                     session_id_int = int(session_id)
-                    session = DataCollectionSession.objects.get(session_id=session_id_int)
+                    session = DataCollectionSession.objects.get(id=session_id_int)
                     if session.status not in ['collecting', 'calibrating']:
                         return JsonResponse({
                             'error': 'Session not active',

@@ -18,12 +18,34 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 from django.db import models
+import socket
+import struct
 
 # Create your views here.
 
 # 请替换为你自己的小程序 appid 和 appsecret
 APPID = '你的appid'
 APPSECRET = '你的appsecret'
+
+# UDP广播配置
+UDP_BROADCAST_PORT = 8888
+UDP_BROADCAST_ADDR = '255.255.255.255'
+
+def send_udp_broadcast(message):
+    """发送UDP广播消息"""
+    try:
+        # 创建UDP socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(1)  # 设置超时时间
+        
+        # 发送广播消息
+        sock.sendto(message.encode('utf-8'), (UDP_BROADCAST_ADDR, UDP_BROADCAST_PORT))
+        sock.close()
+        
+        return True, "广播发送成功"
+    except Exception as e:
+        return False, f"广播发送失败: {str(e)}"
 
 def get_or_create_wx_user(openid):
     """统一处理微信用户创建逻辑"""
@@ -149,9 +171,10 @@ def start_collection_session(request):
 # 新增接口：开始正式数据采集（从calibrating变为collecting）
 @csrf_exempt
 def start_data_collection(request):
-    """将会话状态从calibrating变为collecting，开始正式数据采集"""
+    """将会话状态从calibrating变为collecting，开始正式数据采集，并发送UDP广播"""
     if request.method == 'POST':
         session_id = request.POST.get('session_id')
+        device_code = request.POST.get('device_code', '2025001')  # 默认设备码
         
         if not session_id:
             return JsonResponse({'error': 'session_id required'}, status=400)
@@ -169,12 +192,35 @@ def start_data_collection(request):
             session.status = 'collecting'
             session.save()
             
-            return JsonResponse({
-                'msg': 'Data collection started',
-                'session_id': session.id,
-                'status': 'collecting',
-                'timestamp': session.start_time.isoformat()
+            # 发送UDP广播通知ESP32开始采集
+            broadcast_message = json.dumps({
+                'command': 'START_COLLECTION',
+                'session_id': session_id,
+                'device_code': device_code,
+                'timestamp': datetime.now().isoformat()
             })
+            
+            success, message = send_udp_broadcast(broadcast_message)
+            
+            if success:
+                return JsonResponse({
+                    'msg': 'Data collection started and ESP32 notified',
+                    'session_id': session.id,
+                    'status': 'collecting',
+                    'device_code': device_code,
+                    'broadcast_message': broadcast_message,
+                    'broadcast_port': UDP_BROADCAST_PORT,
+                    'timestamp': session.start_time.isoformat()
+                })
+            else:
+                return JsonResponse({
+                    'msg': 'Data collection started but UDP broadcast failed',
+                    'session_id': session.id,
+                    'status': 'collecting',
+                    'device_code': device_code,
+                    'broadcast_error': message,
+                    'timestamp': session.start_time.isoformat()
+                })
             
         except DataCollectionSession.DoesNotExist:
             return JsonResponse({'error': 'Session not found'}, status=404)
@@ -188,7 +234,14 @@ def start_data_collection(request):
             'required_params': {
                 'session_id': 'int - 会话ID'
             },
-            'description': '将会话状态从calibrating变为collecting，开始正式数据采集'
+            'optional_params': {
+                'device_code': 'string - 设备码 (默认: 2025001)'
+            },
+            'description': '将会话状态从calibrating变为collecting，开始正式数据采集，并发送UDP广播通知ESP32',
+            'example': {
+                'session_id': '123',
+                'device_code': '2025001'
+            }
         })
     
     else:
@@ -197,14 +250,34 @@ def start_data_collection(request):
 # 新增接口：结束数据采集会话
 @csrf_exempt
 def end_collection_session(request):
+    """结束数据采集会话，发送UDP广播通知ESP32停止采集，并开始数据分析"""
     if request.method == 'POST':
         session_id = request.POST.get('session_id')
+        device_code = request.POST.get('device_code', '2025001')  # 默认设备码
         
         if not session_id:
             return JsonResponse({'error': 'session_id required'}, status=400)
         
         try:
             session = DataCollectionSession.objects.get(id=session_id)
+            
+            # 检查当前状态
+            if session.status not in ['collecting', 'calibrating']:
+                return JsonResponse({
+                    'error': f'Session not in active state. Current status: {session.status}'
+                }, status=400)
+            
+            # 发送UDP广播通知ESP32停止采集
+            broadcast_message = json.dumps({
+                'command': 'STOP_COLLECTION',
+                'device_code': device_code,
+                'session_id': session_id,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            success, message = send_udp_broadcast(broadcast_message)
+            
+            # 更新会话状态
             session.status = 'analyzing'
             session.end_time = timezone.now()
             session.save()
@@ -212,11 +285,25 @@ def end_collection_session(request):
             # 触发数据分析
             analysis_result = analyze_session_data(session)
             
-            return JsonResponse({
-                'msg': 'session ended and analysis started',
-                'analysis_id': analysis_result.id,
-                'status': 'analyzing'
-            })
+            if success:
+                return JsonResponse({
+                    'msg': 'Session ended, ESP32 notified, and analysis started',
+                    'session_id': session.id,
+                    'analysis_id': analysis_result.id,
+                    'status': 'analyzing',
+                    'device_code': device_code,
+                    'broadcast_message': broadcast_message,
+                    'broadcast_port': UDP_BROADCAST_PORT
+                })
+            else:
+                return JsonResponse({
+                    'msg': 'Session ended and analysis started, but UDP broadcast failed',
+                    'session_id': session.id,
+                    'analysis_id': analysis_result.id,
+                    'status': 'analyzing',
+                    'device_code': device_code,
+                    'broadcast_error': message
+                })
             
         except DataCollectionSession.DoesNotExist:
             return JsonResponse({'error': 'Session not found'}, status=404)
@@ -1448,42 +1535,40 @@ def esp32_mark_upload_complete(request):
 
 @csrf_exempt
 def notify_esp32_start(request):
-    """通知ESP32开始采集"""
+    """通过UDP广播通知ESP32开始采集"""
     if request.method == 'POST':
         session_id = request.POST.get('session_id')
-        esp32_ip = request.POST.get('esp32_ip')
+        device_code = request.POST.get('device_code', '2025001')  # 默认设备码
         
-        if not session_id or not esp32_ip:
-            return JsonResponse({'error': 'session_id and esp32_ip required'}, status=400)
+        if not session_id:
+            return JsonResponse({'error': 'session_id required'}, status=400)
         
         try:
             # 验证会话存在
             session = DataCollectionSession.objects.get(id=session_id)
             
-            # 通知ESP32开始采集
-            import requests
-            try:
-                esp32_response = requests.post(
-                    f'http://{esp32_ip}/start_collection',
-                    data={'session_id': session_id},
-                    timeout=5
-                )
-                
-                if esp32_response.status_code == 200:
-                    return JsonResponse({
-                        'msg': 'ESP32 notified to start collection',
-                        'session_id': session_id,
-                        'esp32_response': esp32_response.text
-                    })
-                else:
-                    return JsonResponse({
-                        'error': f'ESP32 responded with status {esp32_response.status_code}',
-                        'esp32_response': esp32_response.text
-                    }, status=500)
-                    
-            except requests.exceptions.RequestException as e:
+            # 构建广播消息
+            broadcast_message = json.dumps({
+                'command': 'START_COLLECTION',
+                'session_id': session_id,
+                'device_code': device_code,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # 发送UDP广播
+            success, message = send_udp_broadcast(broadcast_message)
+            
+            if success:
                 return JsonResponse({
-                    'error': f'Failed to notify ESP32: {str(e)}'
+                    'msg': 'UDP广播发送成功，ESP32应该收到开始采集指令',
+                    'session_id': session_id,
+                    'device_code': device_code,
+                    'broadcast_message': broadcast_message,
+                    'broadcast_port': UDP_BROADCAST_PORT
+                })
+            else:
+                return JsonResponse({
+                    'error': message
                 }, status=500)
                 
         except DataCollectionSession.DoesNotExist:
@@ -1493,16 +1578,23 @@ def notify_esp32_start(request):
     
     elif request.method == 'GET':
         return JsonResponse({
-            'msg': 'Notify ESP32 Start Collection API',
+            'msg': 'UDP广播通知ESP32开始采集',
             'method': 'POST',
             'required_params': {
-                'session_id': 'int - 会话ID',
-                'esp32_ip': 'string - ESP32的IP地址'
+                'session_id': 'int - 会话ID'
+            },
+            'optional_params': {
+                'device_code': 'string - 设备码 (默认: 2025001)'
+            },
+            'broadcast_config': {
+                'port': UDP_BROADCAST_PORT,
+                'address': UDP_BROADCAST_ADDR
             },
             'example': {
                 'session_id': '123',
-                'esp32_ip': '192.168.1.100'
-            }
+                'device_code': '2025001'
+            },
+            'note': 'ESP32需要监听UDP端口8888来接收广播消息，并根据device_code过滤消息'
         })
     
     else:
@@ -1510,37 +1602,31 @@ def notify_esp32_start(request):
 
 @csrf_exempt
 def notify_esp32_stop(request):
-    """通知ESP32停止采集"""
+    """通过UDP广播通知ESP32停止采集"""
     if request.method == 'POST':
-        esp32_ip = request.POST.get('esp32_ip')
-        
-        if not esp32_ip:
-            return JsonResponse({'error': 'esp32_ip required'}, status=400)
+        device_code = request.POST.get('device_code', '2025001')  # 默认设备码
         
         try:
-            # 通知ESP32停止采集
-            import requests
-            try:
-                esp32_response = requests.post(
-                    f'http://{esp32_ip}/stop_collection',
-                    data={'command': 'STOP_COLLECTION'},
-                    timeout=5
-                )
-                
-                if esp32_response.status_code == 200:
-                    return JsonResponse({
-                        'msg': 'ESP32 notified to stop collection',
-                        'esp32_response': esp32_response.text
-                    })
-                else:
-                    return JsonResponse({
-                        'error': f'ESP32 responded with status {esp32_response.status_code}',
-                        'esp32_response': esp32_response.text
-                    }, status=500)
-                    
-            except requests.exceptions.RequestException as e:
+            # 构建广播消息
+            broadcast_message = json.dumps({
+                'command': 'STOP_COLLECTION',
+                'device_code': device_code,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # 发送UDP广播
+            success, message = send_udp_broadcast(broadcast_message)
+            
+            if success:
                 return JsonResponse({
-                    'error': f'Failed to notify ESP32: {str(e)}'
+                    'msg': 'UDP广播发送成功，ESP32应该收到停止采集指令',
+                    'device_code': device_code,
+                    'broadcast_message': broadcast_message,
+                    'broadcast_port': UDP_BROADCAST_PORT
+                })
+            else:
+                return JsonResponse({
+                    'error': message
                 }, status=500)
                 
         except Exception as e:
@@ -1548,13 +1634,74 @@ def notify_esp32_stop(request):
     
     elif request.method == 'GET':
         return JsonResponse({
-            'msg': 'Notify ESP32 Stop Collection API',
+            'msg': 'UDP广播通知ESP32停止采集',
             'method': 'POST',
-            'required_params': {
-                'esp32_ip': 'string - ESP32的IP地址'
+            'optional_params': {
+                'device_code': 'string - 设备码 (默认: 2025001)'
+            },
+            'broadcast_config': {
+                'port': UDP_BROADCAST_PORT,
+                'address': UDP_BROADCAST_ADDR
             },
             'example': {
-                'esp32_ip': '192.168.1.100'
+                'device_code': '2025001'
+            },
+            'note': 'ESP32需要监听UDP端口8888来接收广播消息，并根据device_code过滤消息'
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def test_udp_broadcast(request):
+    """测试UDP广播功能"""
+    if request.method == 'POST':
+        message = request.POST.get('message', 'TEST_BROADCAST')
+        device_code = request.POST.get('device_code', '2025001')  # 默认设备码
+        
+        try:
+            # 构建测试广播消息
+            broadcast_message = json.dumps({
+                'command': 'TEST',
+                'message': message,
+                'device_code': device_code,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # 发送UDP广播
+            success, result_message = send_udp_broadcast(broadcast_message)
+            
+            if success:
+                return JsonResponse({
+                    'msg': 'UDP广播测试成功',
+                    'device_code': device_code,
+                    'broadcast_message': broadcast_message,
+                    'broadcast_port': UDP_BROADCAST_PORT,
+                    'result': result_message
+                })
+            else:
+                return JsonResponse({
+                    'error': result_message
+                }, status=500)
+                
+        except Exception as e:
+            return JsonResponse({'error': f'广播测试失败: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'UDP广播测试接口',
+            'method': 'POST',
+            'optional_params': {
+                'message': 'string - 自定义测试消息',
+                'device_code': 'string - 设备码 (默认: 2025001)'
+            },
+            'broadcast_config': {
+                'port': UDP_BROADCAST_PORT,
+                'address': UDP_BROADCAST_ADDR
+            },
+            'example': {
+                'message': 'Hello ESP32!',
+                'device_code': '2025001'
             }
         })
     

@@ -12,6 +12,7 @@ urlpatterns = [
     path('mark_complete/', views.mark_data_collection_complete),  # 新增数据收集完成标记接口
     path('notify_esp32_start/', views.notify_esp32_start),
     path('notify_esp32_stop/', views.notify_esp32_stop),
+    path('test_udp_broadcast/', views.test_udp_broadcast),
     path('get_analysis/', views.get_analysis_result),
     path('generate_report/', views.generate_analysis_report),
     path('upload_mat/', views.upload_mat_file),

@@ -140,9 +140,11 @@ def bind_device(request):
 # 新增接口：开始数据采集会话
 @csrf_exempt
 def start_collection_session(request):
+    """小程序点击开始采集时自动创建会话并发送UDP广播"""
     if request.method == 'POST':
         openid = request.POST.get('openid')
         device_group_code = request.POST.get('device_group_code')
+        device_code = request.POST.get('device_code', '2025001')  # 默认设备码
         
         if not openid or not device_group_code:
             return JsonResponse({'error': 'openid and device_group_code required'}, status=400)
@@ -158,15 +160,60 @@ def start_collection_session(request):
                 status='calibrating'
             )
             
-            return JsonResponse({
-                'msg': 'session started',
-                'session_id': session.id,
-                'status': 'calibrating',
-                'calibration_command': f'CALIBRATE_{device_group_code}'
+            # 发送UDP广播通知ESP32开始采集
+            broadcast_message = json.dumps({
+                'command': 'START_COLLECTION',
+                'session_id': str(session.id),
+                'device_code': device_code,
+                'timestamp': datetime.now().isoformat()
             })
+            
+            success, message = send_udp_broadcast(broadcast_message)
+            
+            if success:
+                return JsonResponse({
+                    'msg': '采集会话创建成功，ESP32已收到开始采集指令',
+                    'session_id': session.id,
+                    'status': 'calibrating',
+                    'device_code': device_code,
+                    'broadcast_message': broadcast_message,
+                    'broadcast_port': UDP_BROADCAST_PORT,
+                    'timestamp': session.start_time.isoformat()
+                })
+            else:
+                return JsonResponse({
+                    'msg': '采集会话创建成功，但UDP广播失败',
+                    'session_id': session.id,
+                    'status': 'calibrating',
+                    'device_code': device_code,
+                    'broadcast_error': message,
+                    'timestamp': session.start_time.isoformat()
+                })
             
         except Exception as e:
             return JsonResponse({'error': f'Session start failed: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': '开始采集API - 自动创建会话并发送UDP广播',
+            'method': 'POST',
+            'required_params': {
+                'openid': 'string - 用户openid',
+                'device_group_code': 'string - 设备组编码'
+            },
+            'optional_params': {
+                'device_code': 'string - 设备码 (默认: 2025001)'
+            },
+            'description': '小程序点击开始采集时自动创建会话并发送UDP广播通知ESP32',
+            'example': {
+                'openid': 'test_user_123456',
+                'device_group_code': '2025001',
+                'device_code': '2025001'
+            }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
 
 # 新增接口：开始正式数据采集（从calibrating变为collecting）
 @csrf_exempt
@@ -247,10 +294,10 @@ def start_data_collection(request):
     else:
         return JsonResponse({'error': 'POST or GET method required'}, status=405)
 
-# 新增接口：结束数据采集会话
+# 小程序结束采集接口
 @csrf_exempt
 def end_collection_session(request):
-    """结束数据采集会话，发送UDP广播通知ESP32停止采集，并开始数据分析"""
+    """小程序点击结束采集时自动发送UDP广播停止采集并开始数据分析"""
     if request.method == 'POST':
         session_id = request.POST.get('session_id')
         device_code = request.POST.get('device_code', '2025001')  # 默认设备码
@@ -264,14 +311,14 @@ def end_collection_session(request):
             # 检查当前状态
             if session.status not in ['collecting', 'calibrating']:
                 return JsonResponse({
-                    'error': f'Session not in active state. Current status: {session.status}'
+                    'error': f'会话不在活动状态。当前状态: {session.status}'
                 }, status=400)
             
             # 发送UDP广播通知ESP32停止采集
             broadcast_message = json.dumps({
                 'command': 'STOP_COLLECTION',
                 'device_code': device_code,
-                'session_id': session_id,
+                'session_id': str(session_id),
                 'timestamp': datetime.now().isoformat()
             })
             
@@ -287,7 +334,7 @@ def end_collection_session(request):
             
             if success:
                 return JsonResponse({
-                    'msg': 'Session ended, ESP32 notified, and analysis started',
+                    'msg': '采集结束，ESP32已收到停止指令，数据分析已开始',
                     'session_id': session.id,
                     'analysis_id': analysis_result.id,
                     'status': 'analyzing',
@@ -297,7 +344,7 @@ def end_collection_session(request):
                 })
             else:
                 return JsonResponse({
-                    'msg': 'Session ended and analysis started, but UDP broadcast failed',
+                    'msg': '采集结束，数据分析已开始，但UDP广播失败',
                     'session_id': session.id,
                     'analysis_id': analysis_result.id,
                     'status': 'analyzing',
@@ -307,6 +354,28 @@ def end_collection_session(request):
             
         except DataCollectionSession.DoesNotExist:
             return JsonResponse({'error': 'Session not found'}, status=404)
+        except Exception as e:
+            return JsonResponse({'error': f'Operation failed: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': '结束采集API - 自动发送UDP广播停止采集并开始数据分析',
+            'method': 'POST',
+            'required_params': {
+                'session_id': 'int - 会话ID'
+            },
+            'optional_params': {
+                'device_code': 'string - 设备码 (默认: 2025001)'
+            },
+            'description': '小程序点击结束采集时自动发送UDP广播停止采集并开始数据分析',
+            'example': {
+                'session_id': '1015',
+                'device_code': '2025001'
+            }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
 
 # 新增接口：上传传感器数据（支持会话）
 @csrf_exempt

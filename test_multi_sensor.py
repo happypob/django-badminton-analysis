@@ -18,18 +18,18 @@ API_ENDPOINT = f"{SERVER_URL}/wxapp/esp32/upload/"
 # 传感器配置
 SENSORS = [
     {
-        "device_code": "esp32_waist_001",
+        "device_code": "2025001",  # 测试设备码
         "sensor_type": "waist",
         "name": "腰部传感器"
     },
     {
-        "device_code": "esp32_shoulder_001", 
+        "device_code": "2025001",  # 测试设备码
         "sensor_type": "shoulder",
         "name": "肩部传感器"
     },
     {
-        "device_code": "esp32_wrist_001",
-        "sensor_type": "wrist", 
+        "device_code": "2025001",  # 测试设备码
+        "sensor_type": "wrist",
         "name": "腕部传感器"
     }
 ]

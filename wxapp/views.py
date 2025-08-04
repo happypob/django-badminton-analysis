@@ -1189,3 +1189,483 @@ def send_data3(request):
             return JsonResponse({'error': f'数据3发送失败: {str(e)}'}, status=500)
     else:
         return JsonResponse({'error': 'POST required'}, status=405)
+
+# 新增接口：手动标记数据收集完成并触发分析
+@csrf_exempt
+def mark_data_collection_complete(request):
+    """
+    手动标记数据收集完成并触发分析
+    调用此接口时，将指定会话的状态改为analyzing并开始分析
+    """
+    if request.method == 'POST':
+        session_id = request.POST.get('session_id')
+        completion_code = request.POST.get('completion_code', '')  # 完成标识码
+        
+        if not session_id:
+            return JsonResponse({'error': 'session_id required'}, status=400)
+        
+        # 验证完成标识码（可选的安全验证）
+        expected_code = "DATA_COLLECTION_COMPLETE_2024"
+        if completion_code and completion_code != expected_code:
+            return JsonResponse({'error': 'Invalid completion code'}, status=400)
+        
+        try:
+            session = DataCollectionSession.objects.get(id=session_id)
+            
+            # 检查会话状态
+            if session.status not in ['collecting', 'calibrating']:
+                return JsonResponse({
+                    'error': 'Session not in active state',
+                    'current_status': session.status
+                }, status=400)
+            
+            # 更新会话状态
+            session.status = 'analyzing'
+            session.end_time = timezone.now()
+            session.save()
+            
+            # 获取该会话的数据统计
+            sensor_data_count = SensorData.objects.filter(session=session).count()
+            sensor_types = SensorData.objects.filter(session=session).values_list('sensor_type', flat=True).distinct()
+            
+            # 触发数据分析
+            try:
+                analysis_result = analyze_session_data(session)
+                analysis_success = True
+                analysis_id = analysis_result.id
+            except Exception as e:
+                analysis_success = False
+                analysis_id = None
+                error_msg = str(e)
+            
+            return JsonResponse({
+                'msg': 'Data collection marked as complete',
+                'session_id': session.id,
+                'session_status': 'analyzing',
+                'data_collection_stats': {
+                    'total_data_points': sensor_data_count,
+                    'sensor_types': list(sensor_types),
+                    'collection_duration_seconds': (session.end_time - session.start_time).total_seconds()
+                },
+                'analysis_triggered': analysis_success,
+                'analysis_id': analysis_id,
+                'analysis_status': 'completed' if analysis_success else 'failed',
+                'error_message': error_msg if not analysis_success else None
+            })
+            
+        except DataCollectionSession.DoesNotExist:
+            return JsonResponse({'error': 'Session not found'}, status=404)
+        except Exception as e:
+            return JsonResponse({'error': f'Operation failed: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        # 返回接口使用说明
+        return JsonResponse({
+            'msg': 'Data Collection Completion API',
+            'method': 'POST',
+            'required_params': {
+                'session_id': 'int - 会话ID',
+                'completion_code': 'string - 完成标识码 (可选，用于安全验证)'
+            },
+            'example': {
+                'session_id': '123',
+                'completion_code': 'DATA_COLLECTION_COMPLETE_2024'
+            },
+            'response': {
+                'msg': 'Data collection marked as complete',
+                'session_id': 123,
+                'session_status': 'analyzing',
+                'data_collection_stats': {
+                    'total_data_points': 150,
+                    'sensor_types': ['waist', 'shoulder', 'wrist'],
+                    'collection_duration_seconds': 30.5
+                },
+                'analysis_triggered': True,
+                'analysis_id': 456,
+                'analysis_status': 'completed'
+            }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def notify_esp32_start(request):
+    """通知ESP32开始采集"""
+    if request.method == 'POST':
+        session_id = request.POST.get('session_id')
+        esp32_ip = request.POST.get('esp32_ip')
+        
+        if not session_id or not esp32_ip:
+            return JsonResponse({'error': 'session_id and esp32_ip required'}, status=400)
+        
+        try:
+            # 验证会话存在
+            session = DataCollectionSession.objects.get(id=session_id)
+            
+            # 通知ESP32开始采集
+            import requests
+            try:
+                esp32_response = requests.post(
+                    f'http://{esp32_ip}/start_collection',
+                    data={'session_id': session_id},
+                    timeout=5
+                )
+                
+                if esp32_response.status_code == 200:
+                    return JsonResponse({
+                        'msg': 'ESP32 notified to start collection',
+                        'session_id': session_id,
+                        'esp32_response': esp32_response.text
+                    })
+                else:
+                    return JsonResponse({
+                        'error': f'ESP32 responded with status {esp32_response.status_code}',
+                        'esp32_response': esp32_response.text
+                    }, status=500)
+                    
+            except requests.exceptions.RequestException as e:
+                return JsonResponse({
+                    'error': f'Failed to notify ESP32: {str(e)}'
+                }, status=500)
+                
+        except DataCollectionSession.DoesNotExist:
+            return JsonResponse({'error': 'Session not found'}, status=404)
+        except Exception as e:
+            return JsonResponse({'error': f'Operation failed: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'Notify ESP32 Start Collection API',
+            'method': 'POST',
+            'required_params': {
+                'session_id': 'int - 会话ID',
+                'esp32_ip': 'string - ESP32的IP地址'
+            },
+            'example': {
+                'session_id': '123',
+                'esp32_ip': '192.168.1.100'
+            }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def notify_esp32_stop(request):
+    """通知ESP32停止采集"""
+    if request.method == 'POST':
+        esp32_ip = request.POST.get('esp32_ip')
+        
+        if not esp32_ip:
+            return JsonResponse({'error': 'esp32_ip required'}, status=400)
+        
+        try:
+            # 通知ESP32停止采集
+            import requests
+            try:
+                esp32_response = requests.post(
+                    f'http://{esp32_ip}/stop_collection',
+                    data={'command': 'STOP_COLLECTION'},
+                    timeout=5
+                )
+                
+                if esp32_response.status_code == 200:
+                    return JsonResponse({
+                        'msg': 'ESP32 notified to stop collection',
+                        'esp32_response': esp32_response.text
+                    })
+                else:
+                    return JsonResponse({
+                        'error': f'ESP32 responded with status {esp32_response.status_code}',
+                        'esp32_response': esp32_response.text
+                    }, status=500)
+                    
+            except requests.exceptions.RequestException as e:
+                return JsonResponse({
+                    'error': f'Failed to notify ESP32: {str(e)}'
+                }, status=500)
+                
+        except Exception as e:
+            return JsonResponse({'error': f'Operation failed: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'Notify ESP32 Stop Collection API',
+            'method': 'POST',
+            'required_params': {
+                'esp32_ip': 'string - ESP32的IP地址'
+            },
+            'example': {
+                'esp32_ip': '192.168.1.100'
+            }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def register_device_ip(request):
+    """ESP32注册设备IP地址"""
+    if request.method == 'POST':
+        device_code = request.POST.get('device_code')
+        ip_address = request.POST.get('ip_address')
+        
+        if not device_code or not ip_address:
+            return JsonResponse({'error': 'device_code and ip_address required'}, status=400)
+        
+        try:
+            # 这里可以将设备IP存储到数据库或缓存中
+            # 为了简单，我们使用全局字典存储
+            if not hasattr(register_device_ip, 'device_ip_map'):
+                register_device_ip.device_ip_map = {}
+            
+            register_device_ip.device_ip_map[device_code] = ip_address
+            
+            return JsonResponse({
+                'msg': f'Device {device_code} IP registered successfully',
+                'device_code': device_code,
+                'ip_address': ip_address
+            })
+            
+        except Exception as e:
+            return JsonResponse({'error': f'Registration failed: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'Register Device IP API',
+            'method': 'POST',
+            'required_params': {
+                'device_code': 'string - 设备ID',
+                'ip_address': 'string - 设备IP地址'
+            },
+            'example': {
+                'device_code': '2025001',
+                'ip_address': '192.168.1.100'
+            }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def notify_device_start(request):
+    """通过设备ID通知ESP32开始采集"""
+    if request.method == 'POST':
+        session_id = request.POST.get('session_id')
+        device_code = request.POST.get('device_code')
+        
+        if not session_id or not device_code:
+            return JsonResponse({'error': 'session_id and device_code required'}, status=400)
+        
+        try:
+            # 验证会话存在
+            session = DataCollectionSession.objects.get(id=session_id)
+            
+            # 从注册的设备IP映射中获取ESP32的IP地址
+            if hasattr(register_device_ip, 'device_ip_map'):
+                device_ip_map = register_device_ip.device_ip_map
+            else:
+                device_ip_map = {}
+            
+            esp32_ip = device_ip_map.get(device_code)
+            if not esp32_ip:
+                return JsonResponse({
+                    'error': f'Device {device_code} not registered or IP not found'
+                }, status=404)
+            
+            # 通知ESP32开始采集
+            import requests
+            try:
+                esp32_response = requests.post(
+                    f'http://{esp32_ip}/start_collection',
+                    data={'session_id': session_id, 'device_code': device_code},
+                    timeout=5
+                )
+                
+                if esp32_response.status_code == 200:
+                    return JsonResponse({
+                        'msg': f'Device {device_code} notified to start collection',
+                        'session_id': session_id,
+                        'device_code': device_code,
+                        'esp32_ip': esp32_ip,
+                        'esp32_response': esp32_response.text
+                    })
+                else:
+                    return JsonResponse({
+                        'error': f'ESP32 responded with status {esp32_response.status_code}',
+                        'device_code': device_code,
+                        'esp32_ip': esp32_ip,
+                        'esp32_response': esp32_response.text
+                    }, status=500)
+                    
+            except requests.exceptions.RequestException as e:
+                return JsonResponse({
+                    'error': f'Failed to notify device {device_code}: {str(e)}',
+                    'device_code': device_code,
+                    'esp32_ip': esp32_ip
+                }, status=500)
+                
+        except DataCollectionSession.DoesNotExist:
+            return JsonResponse({'error': 'Session not found'}, status=404)
+        except Exception as e:
+            return JsonResponse({'error': f'Operation failed: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'Notify Device Start Collection API',
+            'method': 'POST',
+            'required_params': {
+                'session_id': 'int - 会话ID',
+                'device_code': 'string - 设备ID (如: 2025001)'
+            },
+            'example': {
+                'session_id': '123',
+                'device_code': '2025001'
+            }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def notify_device_stop(request):
+    """通过设备ID通知ESP32停止采集"""
+    if request.method == 'POST':
+        device_code = request.POST.get('device_code')
+        
+        if not device_code:
+            return JsonResponse({'error': 'device_code required'}, status=400)
+        
+        try:
+            # 根据设备ID获取ESP32的IP地址
+            device_ip_map = {
+                '2025001': '192.168.1.100',
+                '2025002': '192.168.1.101',
+                '2025003': '192.168.1.102',
+            }
+            
+            esp32_ip = device_ip_map.get(device_code)
+            if not esp32_ip:
+                return JsonResponse({
+                    'error': f'Device {device_code} not found in IP mapping'
+                }, status=404)
+            
+            # 通知ESP32停止采集
+            import requests
+            try:
+                esp32_response = requests.post(
+                    f'http://{esp32_ip}/stop_collection',
+                    data={'device_code': device_code, 'command': 'STOP_COLLECTION'},
+                    timeout=5
+                )
+                
+                if esp32_response.status_code == 200:
+                    return JsonResponse({
+                        'msg': f'Device {device_code} notified to stop collection',
+                        'device_code': device_code,
+                        'esp32_ip': esp32_ip,
+                        'esp32_response': esp32_response.text
+                    })
+                else:
+                    return JsonResponse({
+                        'error': f'ESP32 responded with status {esp32_response.status_code}',
+                        'device_code': device_code,
+                        'esp32_ip': esp32_ip,
+                        'esp32_response': esp32_response.text
+                    }, status=500)
+                    
+            except requests.exceptions.RequestException as e:
+                return JsonResponse({
+                    'error': f'Failed to notify device {device_code}: {str(e)}',
+                    'device_code': device_code,
+                    'esp32_ip': esp32_ip
+                }, status=500)
+                
+        except Exception as e:
+            return JsonResponse({'error': f'Operation failed: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'Notify Device Stop Collection API',
+            'method': 'POST',
+            'required_params': {
+                'device_code': 'string - 设备ID (如: 2025001)'
+            },
+            'example': {
+                'device_code': '2025001'
+            }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def get_device_status(request):
+    """获取设备状态"""
+    if request.method == 'POST':
+        device_code = request.POST.get('device_code')
+        
+        if not device_code:
+            return JsonResponse({'error': 'device_code required'}, status=400)
+        
+        try:
+            # 根据设备ID获取ESP32的IP地址
+            device_ip_map = {
+                '2025001': '192.168.1.100',
+                '2025002': '192.168.1.101',
+                '2025003': '192.168.1.102',
+            }
+            
+            esp32_ip = device_ip_map.get(device_code)
+            if not esp32_ip:
+                return JsonResponse({
+                    'error': f'Device {device_code} not found in IP mapping'
+                }, status=404)
+            
+            # 获取ESP32状态
+            import requests
+            try:
+                esp32_response = requests.get(
+                    f'http://{esp32_ip}/status',
+                    timeout=5
+                )
+                
+                if esp32_response.status_code == 200:
+                    return JsonResponse({
+                        'msg': f'Device {device_code} status retrieved',
+                        'device_code': device_code,
+                        'esp32_ip': esp32_ip,
+                        'status': esp32_response.json()
+                    })
+                else:
+                    return JsonResponse({
+                        'error': f'ESP32 responded with status {esp32_response.status_code}',
+                        'device_code': device_code,
+                        'esp32_ip': esp32_ip
+                    }, status=500)
+                    
+            except requests.exceptions.RequestException as e:
+                return JsonResponse({
+                    'error': f'Failed to get device {device_code} status: {str(e)}',
+                    'device_code': device_code,
+                    'esp32_ip': esp32_ip
+                }, status=500)
+                
+        except Exception as e:
+            return JsonResponse({'error': f'Operation failed: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'Get Device Status API',
+            'method': 'POST',
+            'required_params': {
+                'device_code': 'string - 设备ID (如: 2025001)'
+            },
+            'example': {
+                'device_code': '2025001'
+            }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)

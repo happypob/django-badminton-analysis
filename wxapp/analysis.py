@@ -3,8 +3,10 @@ try:
     import json
     from scipy import signal  # type: ignore
     from scipy.signal import savgol_filter  # type: ignore
-    from scipy.integrate import cumtrapz  # type: ignore
+    from scipy.integrate import cumulative_trapezoid  # type: ignore
     import math
+    # 为了兼容性，将cumulative_trapezoid重命名为cumtrapz
+    cumtrapz = cumulative_trapezoid
 except ImportError as e:
     print(f"Error importing scientific libraries: {e}")
     print("Please install numpy and scipy: pip install numpy scipy")

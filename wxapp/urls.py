@@ -7,6 +7,7 @@ urlpatterns = [
     path('bind_device/', views.bind_device),
     path('upload_sensor_data/', views.upload_sensor_data),
     path('start_session/', views.start_collection_session),
+    path('start_data_collection/', views.start_data_collection),
     path('end_session/', views.end_collection_session),
     path('mark_complete/', views.mark_data_collection_complete),  # 新增数据收集完成标记接口
     path('notify_esp32_start/', views.notify_esp32_start),
@@ -22,6 +23,7 @@ urlpatterns = [
     # 新增ESP32专用接口
     path('esp32/upload/', views.esp32_upload_sensor_data, name='esp32_upload'),
     path('esp32/batch_upload/', views.esp32_batch_upload, name='esp32_batch_upload'),
+    path('esp32/mark_upload_complete/', views.esp32_mark_upload_complete, name='esp32_mark_upload_complete'),
     path('esp32/status/', views.esp32_device_status, name='esp32_status'),
     # 新增设备ID通知接口
     path('register_device_ip/', views.register_device_ip),

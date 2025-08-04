@@ -3,6 +3,7 @@
 #include <WebServer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <ArduinoJson.h>
 
 // 函数前置声明
 void connectWiFi();
@@ -13,6 +14,7 @@ void handleStopCollection();
 void handleStatus();
 void dataUploadTaskFunction(void* parameter);
 void uploadSensorData(const char* sensor_type);
+void printSystemStatus();
 
 // WiFi配置
 const char* ssid = "111";
@@ -28,6 +30,8 @@ WebServer server(80);
 // 数据采集控制
 bool is_collecting = false;
 int current_session_id = 0;
+unsigned long last_upload_time = 0;
+int upload_count = 0;
 
 // FreeRTOS任务句柄
 TaskHandle_t dataUploadTask = NULL;
@@ -36,7 +40,10 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
     
-    Serial.println("🚀 ESP32 WiFi通知系统启动");
+    Serial.println("🚀 ESP32-S3 羽毛球传感器数据采集系统");
+    Serial.println("========================================");
+    Serial.printf("设备码: %s\n", device_code);
+    Serial.printf("服务器: %s\n", server_url);
     Serial.println("========================================");
     
     // 连接WiFi
@@ -49,6 +56,7 @@ void setup() {
     registerDeviceIP();
     
     Serial.println("✅ 系统初始化完成");
+    printSystemStatus();
 }
 
 void connectWiFi() {
@@ -89,6 +97,7 @@ void setupWebServer() {
     
     server.begin();
     Serial.println("🌐 Web服务器已启动 (端口80)");
+    Serial.printf("本地访问地址: http://%s\n", WiFi.localIP().toString().c_str());
 }
 
 void registerDeviceIP() {
@@ -135,16 +144,26 @@ void handleStartCollection() {
         // 开始数据采集
         current_session_id = sessionId.toInt();
         is_collecting = true;
+        upload_count = 0;
+        last_upload_time = millis();
         
         // 创建数据上传任务
         if (dataUploadTask == NULL) {
             xTaskCreate(dataUploadTaskFunction, "DataUpload", 8192, NULL, 1, &dataUploadTask);
+            Serial.println("✅ 数据上传任务已创建");
         }
         
         // 返回成功响应
-        server.send(200, "application/json", "{\"status\":\"collection_started\",\"session_id\":" + sessionId + "}");
+        String response = "{";
+        response += "\"status\":\"collection_started\",";
+        response += "\"session_id\":" + sessionId + ",";
+        response += "\"device_code\":\"" + String(device_code) + "\"";
+        response += "}";
+        
+        server.send(200, "application/json", response);
         
         Serial.println("✅ 数据采集已开始");
+        printSystemStatus();
     } else {
         server.send(400, "text/plain", "Missing parameters");
         Serial.println("❌ 参数缺失");
@@ -166,12 +185,20 @@ void handleStopCollection() {
         if (dataUploadTask != NULL) {
             vTaskDelete(dataUploadTask);
             dataUploadTask = NULL;
+            Serial.println("✅ 数据上传任务已停止");
         }
         
         // 返回成功响应
-        server.send(200, "application/json", "{\"status\":\"collection_stopped\"}");
+        String response = "{";
+        response += "\"status\":\"collection_stopped\",";
+        response += "\"device_code\":\"" + String(device_code) + "\",";
+        response += "\"total_uploads\":" + String(upload_count);
+        response += "}";
+        
+        server.send(200, "application/json", response);
         
         Serial.println("✅ 数据采集已停止");
+        printSystemStatus();
     } else {
         server.send(400, "text/plain", "Missing device_code");
         Serial.println("❌ 设备码参数缺失");
@@ -183,16 +210,18 @@ void handleStatus() {
     status += "\"device_code\":\"" + String(device_code) + "\",";
     status += "\"ip_address\":\"" + WiFi.localIP().toString() + "\",";
     
-    // 修复WiFi状态字符串
+    // WiFi状态
     String wifiStatus = (WiFi.status() == WL_CONNECTED) ? "connected" : "disconnected";
     status += "\"wifi_status\":\"" + wifiStatus + "\",";
     
-    // 修复采集状态字符串
+    // 采集状态
     String collectingStatus = is_collecting ? "true" : "false";
     status += "\"is_collecting\":" + collectingStatus + ",";
     
     status += "\"session_id\":" + String(current_session_id) + ",";
-    status += "\"signal_strength\":" + String(WiFi.RSSI());
+    status += "\"signal_strength\":" + String(WiFi.RSSI()) + ",";
+    status += "\"upload_count\":" + String(upload_count) + ",";
+    status += "\"uptime\":" + String(millis());
     status += "}";
     
     server.send(200, "application/json", status);
@@ -205,15 +234,20 @@ void dataUploadTaskFunction(void* parameter) {
     while (is_collecting) {
         // 上传腰部传感器数据
         uploadSensorData("waist");
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(2000));  // 2秒间隔
         
         // 上传肩部传感器数据
         uploadSensorData("shoulder");
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(2000));  // 2秒间隔
         
         // 上传腕部传感器数据
         uploadSensorData("wrist");
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(2000));  // 2秒间隔
+        
+        // 每10次上传打印一次状态
+        if (upload_count % 10 == 0 && upload_count > 0) {
+            Serial.printf("📈 已上传 %d 组数据\n", upload_count);
+        }
     }
     
     Serial.println("🛑 数据上传任务结束");
@@ -226,15 +260,32 @@ void uploadSensorData(const char* sensor_type) {
         return;
     }
     
+    if (current_session_id == 0) {
+        Serial.println("❌ 无效的会话ID，跳过上传");
+        return;
+    }
+    
     HTTPClient http;
     String url = String(server_url) + "/wxapp/esp32/upload/";
     http.begin(url);
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
     
-    // 生成模拟传感器数据 - 修复类型转换警告
-    float acc[3] = {1.2f + random(-5, 5) * 0.1f, 0.8f + random(-5, 5) * 0.1f, 9.8f + random(-5, 5) * 0.1f};
-    float gyro[3] = {0.1f + random(-5, 5) * 0.01f, 0.2f + random(-5, 5) * 0.01f, 0.3f + random(-5, 5) * 0.01f};
-    float angle[3] = {45.0f + random(-5, 5), 30.0f + random(-5, 5), 60.0f + random(-5, 5)};
+    // 生成模拟传感器数据 - 更真实的数据
+    float acc[3] = {
+        1.2f + random(-10, 10) * 0.1f, 
+        0.8f + random(-10, 10) * 0.1f, 
+        9.8f + random(-10, 10) * 0.1f
+    };
+    float gyro[3] = {
+        0.1f + random(-10, 10) * 0.01f, 
+        0.2f + random(-10, 10) * 0.01f, 
+        0.3f + random(-10, 10) * 0.01f
+    };
+    float angle[3] = {
+        45.0f + random(-15, 15), 
+        30.0f + random(-15, 15), 
+        60.0f + random(-15, 15)
+    };
     
     // 构建JSON数据
     String jsonData = "{";
@@ -250,18 +301,37 @@ void uploadSensorData(const char* sensor_type) {
     postData += "&session_id=" + String(current_session_id);
     postData += "&timestamp=" + String(millis());
     
-    Serial.printf("📡 上传 %s 数据...\n", sensor_type);
+    Serial.printf("📡 上传 %s 数据 (会话ID: %d)...\n", sensor_type, current_session_id);
     
     int httpResponseCode = http.POST(postData);
     
     if (httpResponseCode > 0) {
         String response = http.getString();
         Serial.printf("✅ %s 上传成功 (HTTP: %d)\n", sensor_type, httpResponseCode);
+        
+        // 尝试解析响应
+        if (response.indexOf("ESP32 data upload success") != -1) {
+            upload_count++;
+            last_upload_time = millis();
+        }
     } else {
         Serial.printf("❌ %s 上传失败 (错误: %d)\n", sensor_type, httpResponseCode);
     }
     
     http.end();
+}
+
+void printSystemStatus() {
+    Serial.println("=== 系统状态 ===");
+    Serial.printf("设备码: %s\n", device_code);
+    Serial.printf("WiFi状态: %s\n", WiFi.status() == WL_CONNECTED ? "已连接" : "未连接");
+    Serial.printf("IP地址: %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("信号强度: %d dBm\n", WiFi.RSSI());
+    Serial.printf("数据采集: %s\n", is_collecting ? "进行中" : "已停止");
+    Serial.printf("会话ID: %d\n", current_session_id);
+    Serial.printf("上传次数: %d\n", upload_count);
+    Serial.printf("运行时间: %lu ms\n", millis());
+    Serial.println("================");
 }
 
 void loop() {
@@ -279,15 +349,20 @@ void loop() {
     
     // 定期打印状态
     static unsigned long lastStatusPrint = 0;
-    if (millis() - lastStatusPrint > 30000) {  // 每30秒打印一次
-        Serial.println("=== 系统状态 ===");
-        Serial.printf("WiFi状态: %s\n", WiFi.status() == WL_CONNECTED ? "已连接" : "未连接");
-        Serial.printf("IP地址: %s\n", WiFi.localIP().toString().c_str());
-        Serial.printf("信号强度: %d dBm\n", WiFi.RSSI());
-        Serial.printf("数据采集: %s\n", is_collecting ? "进行中" : "已停止");
-        Serial.printf("会话ID: %d\n", current_session_id);
-        Serial.println("================");
+    if (millis() - lastStatusPrint > 60000) {  // 每60秒打印一次
+        printSystemStatus();
         lastStatusPrint = millis();
+    }
+    
+    // 如果正在采集但长时间没有上传，重新启动任务
+    if (is_collecting && (millis() - last_upload_time > 30000) && last_upload_time > 0) {
+        Serial.println("⚠️ 检测到上传任务可能卡住，重新启动...");
+        if (dataUploadTask != NULL) {
+            vTaskDelete(dataUploadTask);
+            dataUploadTask = NULL;
+        }
+        xTaskCreate(dataUploadTaskFunction, "DataUpload", 8192, NULL, 1, &dataUploadTask);
+        last_upload_time = millis();
     }
     
     delay(1000);

@@ -146,6 +146,54 @@ def start_collection_session(request):
         except Exception as e:
             return JsonResponse({'error': f'Session start failed: {str(e)}'}, status=500)
 
+# 新增接口：开始正式数据采集（从calibrating变为collecting）
+@csrf_exempt
+def start_data_collection(request):
+    """将会话状态从calibrating变为collecting，开始正式数据采集"""
+    if request.method == 'POST':
+        session_id = request.POST.get('session_id')
+        
+        if not session_id:
+            return JsonResponse({'error': 'session_id required'}, status=400)
+        
+        try:
+            session = DataCollectionSession.objects.get(id=session_id)
+            
+            # 检查当前状态
+            if session.status != 'calibrating':
+                return JsonResponse({
+                    'error': f'Session not in calibrating state. Current status: {session.status}'
+                }, status=400)
+            
+            # 更新状态为collecting
+            session.status = 'collecting'
+            session.save()
+            
+            return JsonResponse({
+                'msg': 'Data collection started',
+                'session_id': session.id,
+                'status': 'collecting',
+                'timestamp': session.start_time.isoformat()
+            })
+            
+        except DataCollectionSession.DoesNotExist:
+            return JsonResponse({'error': 'Session not found'}, status=404)
+        except Exception as e:
+            return JsonResponse({'error': f'Operation failed: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'Start Data Collection API',
+            'method': 'POST',
+            'required_params': {
+                'session_id': 'int - 会话ID'
+            },
+            'description': '将会话状态从calibrating变为collecting，开始正式数据采集'
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
 # 新增接口：结束数据采集会话
 @csrf_exempt
 def end_collection_session(request):
@@ -1288,6 +1336,115 @@ def mark_data_collection_complete(request):
     
     else:
         return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def esp32_mark_upload_complete(request):
+    """
+    ESP32专用：标记数据上传完成并触发分析
+    当ESP32完成SD卡数据上传后调用此接口
+    """
+    if request.method == 'POST':
+        session_id = request.POST.get('session_id')
+        device_code = request.POST.get('device_code')
+        upload_stats = request.POST.get('upload_stats', '{}')  # 上传统计信息
+        
+        if not session_id or not device_code:
+            return JsonResponse({
+                'error': 'session_id and device_code required'
+            }, status=400)
+        
+        try:
+            # 验证会话
+            session = DataCollectionSession.objects.get(id=session_id)
+            
+            # 检查会话状态
+            if session.status not in ['collecting', 'calibrating']:
+                return JsonResponse({
+                    'error': 'Session not in active state',
+                    'current_status': session.status
+                }, status=400)
+            
+            # 获取该会话的数据统计
+            sensor_data_count = SensorData.objects.filter(session=session).count()
+            sensor_types = SensorData.objects.filter(session=session).values_list('sensor_type', flat=True).distinct()
+            
+            if sensor_data_count == 0:
+                return JsonResponse({
+                    'error': 'No sensor data found for this session',
+                    'session_id': session.id
+                }, status=400)
+            
+            # 更新会话状态为analyzing
+            session.status = 'analyzing'
+            session.end_time = timezone.now()
+            session.save()
+            
+            # 解析上传统计信息
+            try:
+                stats = json.loads(upload_stats)
+            except:
+                stats = {}
+            
+            # 触发数据分析
+            try:
+                analysis_result = analyze_session_data(session)
+                analysis_success = True
+                analysis_id = analysis_result.id
+                error_msg = None
+            except Exception as e:
+                analysis_success = False
+                analysis_id = None
+                error_msg = str(e)
+            
+            return JsonResponse({
+                'msg': 'ESP32 data upload completed and analysis triggered',
+                'session_id': session.id,
+                'device_code': device_code,
+                'session_status': 'analyzing',
+                'data_collection_stats': {
+                    'total_data_points': sensor_data_count,
+                    'sensor_types': list(sensor_types),
+                    'collection_duration_seconds': (session.end_time - session.start_time).total_seconds()
+                },
+                'upload_stats': stats,
+                'analysis_triggered': analysis_success,
+                'analysis_id': analysis_id,
+                'analysis_status': 'completed' if analysis_success else 'failed',
+                'error_message': error_msg
+            })
+            
+        except DataCollectionSession.DoesNotExist:
+            return JsonResponse({
+                'error': 'Session not found',
+                'session_id': session_id
+            }, status=404)
+        except Exception as e:
+            return JsonResponse({
+                'error': f'Operation failed: {str(e)}'
+            }, status=500)
+    
+    elif request.method == 'GET':
+        # 返回接口使用说明
+        return JsonResponse({
+            'msg': 'ESP32 Upload Completion API',
+            'method': 'POST',
+            'required_params': {
+                'session_id': 'int - 会话ID',
+                'device_code': 'string - 设备码 (如: 2025001)',
+                'upload_stats': 'string - 上传统计信息JSON (可选)'
+            },
+            'example': {
+                'session_id': '1011',
+                'device_code': '2025001',
+                'upload_stats': '{"total_files": 3, "total_bytes": 1024000, "upload_time_ms": 5000}'
+            },
+            'description': 'ESP32完成SD卡数据上传后调用，标记会话完成并触发分析'
+        })
+    
+    else:
+        return JsonResponse({
+            'error': 'POST or GET method required'
+        }, status=405)
 
 @csrf_exempt
 def notify_esp32_start(request):

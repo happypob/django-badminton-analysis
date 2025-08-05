@@ -280,7 +280,7 @@ def start_data_collection(request):
 # 小程序结束采集接口
 @csrf_exempt
 def end_collection_session(request):
-    """小程序点击结束采集时等待ESP32轮询获取停止指令并开始数据分析"""
+    """小程序点击结束采集时等待ESP32轮询获取停止指令"""
     if request.method == 'POST':
         session_id = request.POST.get('session_id')
         device_code = request.POST.get('device_code', '2025001')  # 默认设备码
@@ -297,26 +297,22 @@ def end_collection_session(request):
                     'error': f'会话不在活动状态。当前状态: {session.status}'
                 }, status=400)
             
-            # 更新会话状态为analyzing，等待ESP32轮询获取停止指令
-            session.status = 'analyzing'
+            # 更新会话状态为stopping，等待ESP32轮询获取停止指令
+            session.status = 'stopping'
             session.end_time = timezone.now()
             session.save()
             
             # 记录等待ESP32轮询的指令
             print(f"📱 结束采集会话 {session_id}，等待ESP32轮询停止指令")
             
-            # 触发数据分析
-            analysis_result = analyze_session_data(session)
-            
             return JsonResponse({
-                'msg': '采集结束，等待ESP32轮询获取停止指令，数据分析已开始',
+                'msg': '采集结束，等待ESP32轮询获取停止指令',
                 'session_id': session.id,
-                'analysis_id': analysis_result.id,
-                'status': 'analyzing',
+                'status': 'stopping',
                 'device_code': device_code,
                 'polling_url': f'/wxapp/esp32/poll_commands/',
                 'timestamp': session.end_time.isoformat(),
-                'note': 'ESP32需要轮询 /wxapp/esp32/poll_commands/ 获取停止指令'
+                'note': 'ESP32需要轮询 /wxapp/esp32/poll_commands/ 获取停止指令，上传数据后调用mark_upload_complete'
             })
             
         except DataCollectionSession.DoesNotExist:
@@ -1528,7 +1524,7 @@ def esp32_mark_upload_complete(request):
             session = DataCollectionSession.objects.get(id=session_id)
             
             # 检查会话状态
-            if session.status not in ['collecting', 'calibrating']:
+            if session.status not in ['collecting', 'calibrating', 'stopping']:
                 return JsonResponse({
                     'error': 'Session not in active state',
                     'current_status': session.status
@@ -1538,11 +1534,23 @@ def esp32_mark_upload_complete(request):
             sensor_data_count = SensorData.objects.filter(session=session).count()
             sensor_types = SensorData.objects.filter(session=session).values_list('sensor_type', flat=True).distinct()
             
+            # 如果没有传感器数据，使用上传统计中的信息
             if sensor_data_count == 0:
-                return JsonResponse({
-                    'error': 'No sensor data found for this session',
-                    'session_id': session.id
-                }, status=400)
+                print(f"⚠️ 会话 {session.id} 没有传感器数据，使用上传统计信息")
+                # 解析上传统计信息
+                try:
+                    stats = json.loads(upload_stats)
+                    sensor_data_count = stats.get('total_data_points', 0)
+                    sensor_types = stats.get('sensor_types', [])
+                except:
+                    sensor_data_count = 0
+                    sensor_types = []
+                
+                if sensor_data_count == 0:
+                    return JsonResponse({
+                        'error': 'No sensor data found for this session',
+                        'session_id': session.id
+                    }, status=400)
             
             # 更新会话状态为analyzing
             session.status = 'analyzing'
@@ -2095,8 +2103,8 @@ def esp32_poll_commands(request):
                     'timestamp': datetime.now().isoformat(),
                     'message': '开始采集指令'
                 })
-            elif latest_session.status == 'analyzing':
-                # 任何analyzing状态的会话都应该发送停止指令
+            elif latest_session.status == 'stopping':
+                # stopping状态的会话发送停止指令
                 print(f"🔍 调试: 发送停止指令")
                 return JsonResponse({
                     'device_code': device_code,

@@ -44,6 +44,7 @@ class DataCollectionSession(models.Model):
     STATUS_CHOICES = [
         ('calibrating', '校准中'),
         ('collecting', '采集中'),
+        ('stopping', '停止中'),
         ('analyzing', '分析中'),
         ('completed', '已完成'),
         ('stopped', '已停止'),

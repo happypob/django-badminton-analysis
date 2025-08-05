@@ -1,0 +1,121 @@
+<!-- index.wxml - 修复版小程序界面 -->
+<view class="container">
+  <view class="header">
+    <text class="title">羽毛球分析系统</text>
+    <text class="subtitle">ESP32数据采集控制</text>
+  </view>
+
+  <!-- 设备配置区域 -->
+  <view class="section">
+    <text class="section-title">设备配置</text>
+    
+    <view class="input-group">
+      <text class="label">设备代码:</text>
+      <input 
+        class="input" 
+        placeholder="请输入设备代码" 
+        value="{{deviceCode}}"
+        bindinput="onDeviceCodeInput"
+      />
+    </view>
+    
+    <button class="btn btn-primary" bindtap="onBindDevice">
+      绑定设备
+    </button>
+  </view>
+
+  <!-- 会话控制区域 -->
+  <view class="section">
+    <text class="section-title">会话控制</text>
+    
+    <view class="status-display">
+      <text class="status-label">当前状态:</text>
+      <text class="status-value {{isCollecting ? 'collecting' : 'idle'}}">
+        {{isCollecting ? '采集中' : '空闲'}}
+      </text>
+    </view>
+    
+    <view class="session-info" wx:if="{{sessionId}}">
+      <text class="info-label">会话ID:</text>
+      <text class="info-value">{{sessionId}}</text>
+    </view>
+    
+    <view class="button-group">
+      <button 
+        class="btn btn-success" 
+        bindtap="startSession"
+        disabled="{{isCollecting}}"
+      >
+        开始采集
+      </button>
+      
+      <button 
+        class="btn btn-danger" 
+        bindtap="endSession"
+        disabled="{{!isCollecting}}"
+      >
+        结束采集
+      </button>
+    </view>
+  </view>
+
+  <!-- 数据发送区域 -->
+  <view class="section">
+    <text class="section-title">数据发送</text>
+    
+    <view class="button-group">
+      <button class="btn btn-secondary" bindtap="sendData1">
+        发送数据1
+      </button>
+      
+      <button class="btn btn-secondary" bindtap="sendData2">
+        发送数据2
+      </button>
+      
+      <button class="btn btn-secondary" bindtap="sendData3">
+        发送数据3
+      </button>
+    </view>
+  </view>
+
+  <!-- 分析结果区域 -->
+  <view class="section">
+    <text class="section-title">分析结果</text>
+    
+    <button 
+      class="btn btn-info" 
+      bindtap="getAnalysis"
+      disabled="{{!sessionId}}"
+    >
+      获取分析结果
+    </button>
+  </view>
+
+  <!-- 工具区域 -->
+  <view class="section">
+    <text class="section-title">工具</text>
+    
+    <view class="button-group">
+      <button class="btn btn-warning" bindtap="showStatus">
+        显示状态
+      </button>
+      
+      <button class="btn btn-warning" bindtap="clearSession">
+        清除会话
+      </button>
+    </view>
+  </view>
+
+  <!-- 说明区域 -->
+  <view class="section">
+    <text class="section-title">使用说明</text>
+    
+    <view class="instructions">
+      <text class="instruction-item">1. 输入设备代码并绑定设备</text>
+      <text class="instruction-item">2. 点击"开始采集"创建会话</text>
+      <text class="instruction-item">3. ESP32会自动轮询获取开始指令</text>
+      <text class="instruction-item">4. 点击"结束采集"结束会话</text>
+      <text class="instruction-item">5. ESP32会收到停止指令</text>
+    </view>
+  </view>
+</view> 

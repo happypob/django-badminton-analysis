@@ -1447,6 +1447,27 @@ def mark_data_collection_complete(request):
                 analysis_result = analyze_session_data(session)
                 analysis_success = True
                 analysis_id = analysis_result.id
+                
+                # 自动生成最新分析图片
+                try:
+                    angle_data = extract_angular_velocity_data(session)
+                    time_labels = angle_data['time_labels']
+                    sensor_data = {
+                        'waist': angle_data['waist_data'],
+                        'shoulder': angle_data['shoulder_data'],
+                        'wrist': angle_data['wrist_data'],
+                        'racket': angle_data['racket_data']
+                    }
+                    # 只保留有数据的传感器
+                    sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
+                    if sensor_data and time_labels:
+                        generate_multi_sensor_curve(sensor_data, time_labels)
+                        print(f"✅ 会话 {session.id} 分析图片生成成功")
+                    else:
+                        print(f"⚠️ 会话 {session.id} 无有效数据生成图片")
+                except Exception as img_error:
+                    print(f"⚠️ 会话 {session.id} 图片生成失败: {str(img_error)}")
+                
             except Exception as e:
                 analysis_success = False
                 analysis_id = None
@@ -1545,12 +1566,12 @@ def esp32_mark_upload_complete(request):
                 except:
                     sensor_data_count = 0
                     sensor_types = []
-                
-                if sensor_data_count == 0:
-                    return JsonResponse({
-                        'error': 'No sensor data found for this session',
-                        'session_id': session.id
-                    }, status=400)
+            
+            if sensor_data_count == 0:
+                return JsonResponse({
+                    'error': 'No sensor data found for this session',
+                    'session_id': session.id
+                }, status=400)
             
             # 更新会话状态为analyzing
             session.status = 'analyzing'
@@ -1569,6 +1590,27 @@ def esp32_mark_upload_complete(request):
                 analysis_success = True
                 analysis_id = analysis_result.id
                 error_msg = None
+                
+                # 自动生成最新分析图片
+                try:
+                    angle_data = extract_angular_velocity_data(session)
+                    time_labels = angle_data['time_labels']
+                    sensor_data = {
+                        'waist': angle_data['waist_data'],
+                        'shoulder': angle_data['shoulder_data'],
+                        'wrist': angle_data['wrist_data'],
+                        'racket': angle_data['racket_data']
+                    }
+                    # 只保留有数据的传感器
+                    sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
+                    if sensor_data and time_labels:
+                        generate_multi_sensor_curve(sensor_data, time_labels)
+                        print(f"✅ ESP32会话 {session.id} 分析图片生成成功")
+                    else:
+                        print(f"⚠️ ESP32会话 {session.id} 无有效数据生成图片")
+                except Exception as img_error:
+                    print(f"⚠️ ESP32会话 {session.id} 图片生成失败: {str(img_error)}")
+                
             except Exception as e:
                 analysis_success = False
                 analysis_id = None

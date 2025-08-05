@@ -31,4 +31,8 @@ urlpatterns = [
     path('notify_device_start/', views.notify_device_start),
     path('notify_device_stop/', views.notify_device_stop),
     path('get_device_status/', views.get_device_status),
+    # ESP32轮询相关接口
+    path('esp32/poll_commands/', views.esp32_poll_commands, name='esp32_poll_commands'),
+    path('esp32/status/', views.esp32_status_update, name='esp32_status_update'),
+    path('esp32/heartbeat/', views.esp32_heartbeat, name='esp32_heartbeat'),
 ] 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-简单测试脚本
+调试测试脚本
 """
 
 import requests
@@ -10,9 +10,9 @@ import time
 SERVER_URL = "http://localhost:8000"
 device_code = "2025001"
 
-def test_stop_command():
-    """测试停止指令"""
-    print("🔍 测试停止指令逻辑")
+def debug_test():
+    """调试测试"""
+    print("🔍 调试测试")
     print("=" * 30)
     
     # 1. 创建会话
@@ -22,6 +22,9 @@ def test_stop_command():
         'device_group_code': device_code,
         'device_code': device_code
     })
+    
+    print(f"状态码: {response.status_code}")
+    print(f"响应: {response.text}")
     
     if response.status_code == 200:
         result = response.json()
@@ -35,6 +38,9 @@ def test_stop_command():
             'current_session': '',
             'status': 'idle'
         })
+        
+        print(f"状态码: {response.status_code}")
+        print(f"响应: {response.text}")
         
         if response.status_code == 200:
             result = response.json()
@@ -52,16 +58,22 @@ def test_stop_command():
                     'device_code': device_code
                 })
                 
+                print(f"状态码: {response.status_code}")
+                print(f"响应: {response.text}")
+                
                 if response.status_code == 200:
                     print("✅ 会话结束成功")
                     
-                    # 4. 轮询获取停止指令（使用正确的会话ID）
+                    # 4. 轮询获取停止指令
                     print("\n📡 4. 轮询获取停止指令")
                     response = requests.post(f"{SERVER_URL}/wxapp/esp32/poll_commands/", data={
                         'device_code': device_code,
-                        'current_session': poll_session_id,  # 使用轮询返回的会话ID
+                        'current_session': poll_session_id,
                         'status': 'collecting'
                     })
+                    
+                    print(f"状态码: {response.status_code}")
+                    print(f"响应: {response.text}")
                     
                     if response.status_code == 200:
                         result = response.json()
@@ -84,4 +96,4 @@ def test_stop_command():
         print("❌ 会话创建失败")
 
 if __name__ == "__main__":
-    test_stop_command() 
+    debug_test() 

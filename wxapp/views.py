@@ -140,7 +140,7 @@ def bind_device(request):
 # 新增接口：开始数据采集会话
 @csrf_exempt
 def start_collection_session(request):
-    """小程序点击开始采集时自动创建会话并发送UDP广播"""
+    """小程序点击开始采集时自动创建会话并等待ESP32轮询"""
     if request.method == 'POST':
         openid = request.POST.get('openid')
         device_group_code = request.POST.get('device_group_code')
@@ -160,42 +160,25 @@ def start_collection_session(request):
                 status='calibrating'
             )
             
-            # 发送UDP广播通知ESP32开始采集
-            broadcast_message = json.dumps({
-                'command': 'START_COLLECTION',
-                'session_id': str(session.id),
+            # 记录等待ESP32轮询的指令
+            print(f"📱 创建采集会话 {session.id}，等待ESP32轮询开始指令")
+            
+            return JsonResponse({
+                'msg': '采集会话创建成功，等待ESP32轮询获取开始指令',
+                'session_id': session.id,
+                'status': 'calibrating',
                 'device_code': device_code,
-                'timestamp': datetime.now().isoformat()
+                'polling_url': f'/wxapp/esp32/poll_commands/',
+                'timestamp': session.start_time.isoformat(),
+                'note': 'ESP32需要定期轮询 /wxapp/esp32/poll_commands/ 获取指令'
             })
-            
-            success, message = send_udp_broadcast(broadcast_message)
-            
-            if success:
-                return JsonResponse({
-                    'msg': '采集会话创建成功，ESP32已收到开始采集指令',
-                    'session_id': session.id,
-                    'status': 'calibrating',
-                    'device_code': device_code,
-                    'broadcast_message': broadcast_message,
-                    'broadcast_port': UDP_BROADCAST_PORT,
-                    'timestamp': session.start_time.isoformat()
-                })
-            else:
-                return JsonResponse({
-                    'msg': '采集会话创建成功，但UDP广播失败',
-                    'session_id': session.id,
-                    'status': 'calibrating',
-                    'device_code': device_code,
-                    'broadcast_error': message,
-                    'timestamp': session.start_time.isoformat()
-                })
             
         except Exception as e:
             return JsonResponse({'error': f'Session start failed: {str(e)}'}, status=500)
     
     elif request.method == 'GET':
         return JsonResponse({
-            'msg': '开始采集API - 自动创建会话并发送UDP广播',
+            'msg': '开始采集API - 自动创建会话并等待ESP32轮询',
             'method': 'POST',
             'required_params': {
                 'openid': 'string - 用户openid',
@@ -204,7 +187,7 @@ def start_collection_session(request):
             'optional_params': {
                 'device_code': 'string - 设备码 (默认: 2025001)'
             },
-            'description': '小程序点击开始采集时自动创建会话并发送UDP广播通知ESP32',
+            'description': '小程序点击开始采集时自动创建会话，ESP32通过轮询获取指令',
             'example': {
                 'openid': 'test_user_123456',
                 'device_group_code': '2025001',
@@ -297,7 +280,7 @@ def start_data_collection(request):
 # 小程序结束采集接口
 @csrf_exempt
 def end_collection_session(request):
-    """小程序点击结束采集时自动发送UDP广播停止采集并开始数据分析"""
+    """小程序点击结束采集时等待ESP32轮询获取停止指令并开始数据分析"""
     if request.method == 'POST':
         session_id = request.POST.get('session_id')
         device_code = request.POST.get('device_code', '2025001')  # 默认设备码
@@ -314,43 +297,27 @@ def end_collection_session(request):
                     'error': f'会话不在活动状态。当前状态: {session.status}'
                 }, status=400)
             
-            # 发送UDP广播通知ESP32停止采集
-            broadcast_message = json.dumps({
-                'command': 'STOP_COLLECTION',
-                'device_code': device_code,
-                'session_id': str(session_id),
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            success, message = send_udp_broadcast(broadcast_message)
-            
-            # 更新会话状态
+            # 更新会话状态为analyzing，等待ESP32轮询获取停止指令
             session.status = 'analyzing'
             session.end_time = timezone.now()
             session.save()
             
+            # 记录等待ESP32轮询的指令
+            print(f"📱 结束采集会话 {session_id}，等待ESP32轮询停止指令")
+            
             # 触发数据分析
             analysis_result = analyze_session_data(session)
             
-            if success:
-                return JsonResponse({
-                    'msg': '采集结束，ESP32已收到停止指令，数据分析已开始',
-                    'session_id': session.id,
-                    'analysis_id': analysis_result.id,
-                    'status': 'analyzing',
-                    'device_code': device_code,
-                    'broadcast_message': broadcast_message,
-                    'broadcast_port': UDP_BROADCAST_PORT
-                })
-            else:
-                return JsonResponse({
-                    'msg': '采集结束，数据分析已开始，但UDP广播失败',
-                    'session_id': session.id,
-                    'analysis_id': analysis_result.id,
-                    'status': 'analyzing',
-                    'device_code': device_code,
-                    'broadcast_error': message
-                })
+            return JsonResponse({
+                'msg': '采集结束，等待ESP32轮询获取停止指令，数据分析已开始',
+                'session_id': session.id,
+                'analysis_id': analysis_result.id,
+                'status': 'analyzing',
+                'device_code': device_code,
+                'polling_url': f'/wxapp/esp32/poll_commands/',
+                'timestamp': session.end_time.isoformat(),
+                'note': 'ESP32需要轮询 /wxapp/esp32/poll_commands/ 获取停止指令'
+            })
             
         except DataCollectionSession.DoesNotExist:
             return JsonResponse({'error': 'Session not found'}, status=404)
@@ -359,7 +326,7 @@ def end_collection_session(request):
     
     elif request.method == 'GET':
         return JsonResponse({
-            'msg': '结束采集API - 自动发送UDP广播停止采集并开始数据分析',
+            'msg': '结束采集API - 等待ESP32轮询获取停止指令并开始数据分析',
             'method': 'POST',
             'required_params': {
                 'session_id': 'int - 会话ID'
@@ -367,7 +334,7 @@ def end_collection_session(request):
             'optional_params': {
                 'device_code': 'string - 设备码 (默认: 2025001)'
             },
-            'description': '小程序点击结束采集时自动发送UDP广播停止采集并开始数据分析',
+            'description': '小程序点击结束采集时等待ESP32轮询获取停止指令并开始数据分析',
             'example': {
                 'session_id': '1015',
                 'device_code': '2025001'
@@ -1265,13 +1232,60 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
 # 只返回图片URL，不再每次请求都生成图片
 
 def latest_analysis_images(request):
-    filename = "latest_multi_sensor_curve.jpg"
-    data = [{
-        "image_url": request.build_absolute_uri(f"/images/{filename}"),
-        "title": "多传感器角速度随时间变化曲线",
-        "description": "同一张图展示各个传感器的角速度变化，便于观察发力时延"
-    }]
-    return JsonResponse(data, safe=False)
+    """获取最新的分析结果图片"""
+    try:
+        # 查找最新的分析结果
+        latest_analysis = AnalysisResult.objects.order_by('-analysis_time').first()
+        
+        if not latest_analysis:
+            return JsonResponse({
+                'error': 'No analysis results found',
+                'message': '暂无分析结果'
+            }, status=404)
+        
+        # 构建图片数据
+        images = []
+        
+        # 多传感器曲线图
+        multi_sensor_filename = "latest_multi_sensor_curve.jpg"
+        multi_sensor_path = os.path.join(settings.MEDIA_ROOT, 'images', multi_sensor_filename)
+        
+        if os.path.exists(multi_sensor_path):
+            images.append({
+                "image_url": request.build_absolute_uri(f"/images/{multi_sensor_filename}"),
+                "title": "多传感器角速度随时间变化曲线",
+                "description": "同一张图展示各个传感器的角速度变化，便于观察发力时延",
+                "analysis_id": latest_analysis.id,
+                "session_id": latest_analysis.session_id,
+                "created_at": latest_analysis.analysis_time.isoformat()
+            })
+        
+        # 如果没有找到任何图片，返回默认图片信息
+        if not images:
+            images.append({
+                "image_url": request.build_absolute_uri("/images/default_analysis.jpg"),
+                "title": "默认分析图片",
+                "description": "暂无分析图片，显示默认图片",
+                "analysis_id": latest_analysis.id,
+                "session_id": latest_analysis.session_id,
+                "created_at": latest_analysis.analysis_time.isoformat()
+            })
+        
+        return JsonResponse({
+            'images': images,
+            'latest_analysis': {
+                'id': latest_analysis.id,
+                'session_id': latest_analysis.session_id,
+                'created_at': latest_analysis.analysis_time.isoformat(),
+                'status': 'completed'
+            }
+        }, safe=False)
+        
+    except Exception as e:
+        return JsonResponse({
+            'error': f'Failed to get latest analysis images: {str(e)}',
+            'message': '获取最新分析图片失败'
+        }, status=500)
 
 # 示例：你可以在分析数据更新时调用如下代码生成图片
 # time = np.linspace(0, 2 * np.pi, 100)
@@ -2038,6 +2052,174 @@ def get_device_status(request):
             'example': {
                 'device_code': '2025001'
             }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def esp32_poll_commands(request):
+    """ESP32轮询服务器指令"""
+    if request.method == 'POST':
+        device_code = request.POST.get('device_code')
+        current_session = request.POST.get('current_session', '')
+        status = request.POST.get('status', 'idle')
+        
+        if not device_code:
+            return JsonResponse({'error': 'device_code required'}, status=400)
+        
+        try:
+            # 查找该设备的最新会话
+            latest_session = DataCollectionSession.objects.filter(
+                device_group__group_code=device_code
+            ).order_by('-start_time').first()
+            
+            if not latest_session:
+                return JsonResponse({
+                    'device_code': device_code,
+                    'command': None,
+                    'message': 'No session found for device'
+                })
+            
+            # 检查会话状态和指令
+            print(f"🔍 调试: latest_session.id={latest_session.id}, status={latest_session.status}")
+            print(f"🔍 调试: current_session={current_session}, device_code={device_code}")
+            
+            if latest_session.status == 'calibrating' and current_session != str(latest_session.id):
+                # 新会话，发送开始指令
+                print(f"🔍 调试: 发送开始指令")
+                return JsonResponse({
+                    'device_code': device_code,
+                    'command': 'START_COLLECTION',
+                    'session_id': str(latest_session.id),
+                    'timestamp': datetime.now().isoformat(),
+                    'message': '开始采集指令'
+                })
+            elif latest_session.status == 'analyzing':
+                # 任何analyzing状态的会话都应该发送停止指令
+                print(f"🔍 调试: 发送停止指令")
+                return JsonResponse({
+                    'device_code': device_code,
+                    'command': 'STOP_COLLECTION',
+                    'session_id': str(latest_session.id),
+                    'timestamp': datetime.now().isoformat(),
+                    'message': '停止采集指令'
+                })
+            else:
+                # 无新指令
+                print(f"🔍 调试: 无新指令")
+                return JsonResponse({
+                    'device_code': device_code,
+                    'command': None,
+                    'current_session': current_session,
+                    'status': status,
+                    'message': '无新指令'
+                })
+                
+        except Exception as e:
+            return JsonResponse({'error': f'Failed to poll commands: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'ESP32轮询指令API',
+            'method': 'POST',
+            'required_params': {
+                'device_code': 'string - 设备码'
+            },
+            'optional_params': {
+                'current_session': 'string - 当前会话ID',
+                'status': 'string - 当前状态 (idle/collecting)'
+            },
+            'description': 'ESP32定期轮询服务器获取指令',
+            'response': {
+                'command': 'string - 指令类型 (START_COLLECTION/STOP_COLLECTION/null)',
+                'session_id': 'string - 会话ID',
+                'timestamp': 'string - 时间戳'
+            }
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def esp32_status_update(request):
+    """ESP32状态更新"""
+    if request.method == 'POST':
+        status = request.POST.get('status')
+        session_id = request.POST.get('session_id')
+        device_code = request.POST.get('device_code')
+        
+        if not all([status, session_id, device_code]):
+            return JsonResponse({'error': 'status, session_id, and device_code required'}, status=400)
+        
+        try:
+            # 记录ESP32状态更新
+            print(f"📱 ESP32状态更新: {device_code} - {status} - 会话: {session_id}")
+            
+            return JsonResponse({
+                'msg': '状态更新成功',
+                'device_code': device_code,
+                'status': status,
+                'session_id': session_id,
+                'timestamp': datetime.now().isoformat()
+            })
+                
+        except Exception as e:
+            return JsonResponse({'error': f'Failed to update status: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'ESP32状态更新API',
+            'method': 'POST',
+            'required_params': {
+                'status': 'string - 状态 (START_COLLECTION_CONFIRMED/STOP_COLLECTION_CONFIRMED)',
+                'session_id': 'string - 会话ID',
+                'device_code': 'string - 设备码'
+            },
+            'description': 'ESP32确认指令执行状态'
+        })
+    
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+@csrf_exempt
+def esp32_heartbeat(request):
+    """ESP32心跳"""
+    if request.method == 'POST':
+        session_id = request.POST.get('session_id')
+        device_code = request.POST.get('device_code')
+        status = request.POST.get('status', 'collecting')
+        
+        if not all([session_id, device_code]):
+            return JsonResponse({'error': 'session_id and device_code required'}, status=400)
+        
+        try:
+            # 记录ESP32心跳
+            print(f"💓 ESP32心跳: {device_code} - 会话: {session_id} - 状态: {status}")
+            
+            return JsonResponse({
+                'msg': '心跳接收成功',
+                'device_code': device_code,
+                'session_id': session_id,
+                'status': status,
+                'timestamp': datetime.now().isoformat()
+            })
+                
+        except Exception as e:
+            return JsonResponse({'error': f'Failed to process heartbeat: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'ESP32心跳API',
+            'method': 'POST',
+            'required_params': {
+                'session_id': 'string - 会话ID',
+                'device_code': 'string - 设备码'
+            },
+            'optional_params': {
+                'status': 'string - 状态 (默认: collecting)'
+            },
+            'description': 'ESP32定期发送心跳保持连接'
         })
     
     else:

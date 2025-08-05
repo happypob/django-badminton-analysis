@@ -356,7 +356,7 @@ def upload_sensor_data(request):
             session = None
             if session_id:
                 session = DataCollectionSession.objects.get(id=session_id)
-                if session.status not in ['collecting', 'calibrating']:
+                if session.status not in ['collecting', 'calibrating', 'stopping']:
                     return JsonResponse({'error': 'Session not active'}, status=400)
             
             # 存储传感器数据
@@ -436,7 +436,7 @@ def esp32_upload_sensor_data(request):
                     # 尝试将session_id转换为整数
                     session_id_int = int(session_id)
                     session = DataCollectionSession.objects.get(id=session_id_int)
-                    if session.status not in ['collecting', 'calibrating']:
+                    if session.status not in ['collecting', 'calibrating', 'stopping']:
                         return JsonResponse({
                             'error': 'Session not active',
                             'session_status': session.status
@@ -575,7 +575,7 @@ def esp32_batch_upload(request):
                     # 尝试将session_id转换为整数
                     session_id_int = int(session_id)
                     session = DataCollectionSession.objects.get(id=session_id_int)
-                    if session.status not in ['collecting', 'calibrating']:
+                    if session.status not in ['collecting', 'calibrating', 'stopping']:
                         return JsonResponse({
                             'error': 'Session not active'
                         }, status=400)

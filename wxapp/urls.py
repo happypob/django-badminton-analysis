@@ -17,6 +17,7 @@ urlpatterns = [
     path('generate_report/', views.generate_analysis_report),
     path('upload_mat/', views.upload_mat_file),
     path('get_mat_analysis/', views.get_mat_analysis_result),
+    path('latest_analysis_images/', views.latest_analysis_images),  # 新增图片获取接口
     # 新增小程序数据发送接口
     path('send_data1/', views.send_data1),
     path('send_data2/', views.send_data2),

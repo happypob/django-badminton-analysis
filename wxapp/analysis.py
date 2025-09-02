@@ -77,25 +77,43 @@ class BadmintonAnalysis:
         self.ideal_delays = [0.08, 0.05]  # 理想时序延迟[s]
     
     def preprocess_data(self, sensor_data_list):
-        """数据预处理，对应MATLAB的preprocess_data函数"""
-        # 按传感器类型分组
+        """数据预处理，对应MATLAB的preprocess_data函数，现在支持ESP32时间戳"""
+        # 按传感器类型分组，同时保留时间戳信息
         waist_data = []
         shoulder_data = []
         wrist_data = []
+        waist_timestamps = []
+        shoulder_timestamps = []
+        wrist_timestamps = []
         
         for data in sensor_data_list:
             data_dict = json.loads(data.data)
+            
+            # 优先使用ESP32时间戳，否则使用服务器时间戳
+            timestamp = data.esp32_timestamp if data.esp32_timestamp else data.timestamp
+            
             if data.sensor_type == 'waist':
                 waist_data.append(data_dict)
+                waist_timestamps.append(timestamp)
             elif data.sensor_type == 'shoulder':
                 shoulder_data.append(data_dict)
+                shoulder_timestamps.append(timestamp)
             elif data.sensor_type == 'wrist':
                 wrist_data.append(data_dict)
+                wrist_timestamps.append(timestamp)
         
         # 转换为numpy数组
         waist = self._convert_to_numpy(waist_data)
         shoulder = self._convert_to_numpy(shoulder_data)
         wrist = self._convert_to_numpy(wrist_data)
+        
+        # 添加时间戳信息到结果中
+        if waist:
+            waist['timestamps'] = waist_timestamps
+        if shoulder:
+            shoulder['timestamps'] = shoulder_timestamps
+        if wrist:
+            wrist['timestamps'] = wrist_timestamps
         
         # 应用滤波器
         waist = self._apply_filters(waist)
@@ -141,28 +159,56 @@ class BadmintonAnalysis:
         
         # Savitzky-Golay滤波
         if 'gyro' in sensor_data:
-            filtered_data['gyro'] = savgol_filter(
-                sensor_data['gyro'], 
-                self.savitzky_window, 
-                3, 
-                axis=0
-            )
+            # 动态调整窗口大小，确保不超过数据长度
+            data_length = len(sensor_data['gyro'])
+            window_size = min(self.savitzky_window, data_length)
+            if window_size % 2 == 0:  # 确保窗口大小为奇数
+                window_size -= 1
+            if window_size < 3:  # 最小窗口大小
+                window_size = 3
+            
+            if data_length >= window_size:
+                filtered_data['gyro'] = savgol_filter(
+                    sensor_data['gyro'], 
+                    window_size, 
+                    min(3, window_size-1), 
+                    axis=0
+                )
+            else:
+                # 数据点太少，不进行滤波
+                filtered_data['gyro'] = sensor_data['gyro']
         
         if 'acc' in sensor_data:
-            filtered_data['acc'] = savgol_filter(
-                sensor_data['acc'], 
-                self.savitzky_window, 
-                3, 
-                axis=0
-            )
+            # 动态调整窗口大小，确保不超过数据长度
+            data_length = len(sensor_data['acc'])
+            window_size = min(self.savitzky_window, data_length)
+            if window_size % 2 == 0:  # 确保窗口大小为奇数
+                window_size -= 1
+            if window_size < 3:  # 最小窗口大小
+                window_size = 3
+            
+            if data_length >= window_size:
+                filtered_data['acc'] = savgol_filter(
+                    sensor_data['acc'], 
+                    window_size, 
+                    min(3, window_size-1), 
+                    axis=0
+                )
+            else:
+                # 数据点太少，不进行滤波
+                filtered_data['acc'] = sensor_data['acc']
         
         if 'angle' in sensor_data:
             filtered_data['angle'] = sensor_data['angle']  # 角度数据不滤波
         
+        # 保留时间戳信息
+        if 'timestamps' in sensor_data:
+            filtered_data['timestamps'] = sensor_data['timestamps']
+        
         return filtered_data
     
     def phase_analysis(self, waist, shoulder, wrist):
-        """时序分析，对应MATLAB的phase_analysis函数"""
+        """时序分析，对应MATLAB的phase_analysis函数，现在基于ESP32精确时间戳"""
         if waist is None or shoulder is None or wrist is None:
             return {'delay': [0, 0], 'peaks': {}}
         
@@ -199,12 +245,44 @@ class BadmintonAnalysis:
         if len(wrist_peaks) == 0:
             wrist_peaks, _ = signal.find_peaks(wrist_mag, height=5)
         
-        # 计算延迟时间
+        # 计算延迟时间 - 现在基于真实时间戳
         delay = [0, 0]  # 默认值
         
-        # 腰肩延迟
-        if len(waist_peaks) > 0 and len(shoulder_peaks) > 0:
-            # 找到第一个有效的峰值对
+        # 获取时间戳信息
+        waist_timestamps = waist.get('timestamps', [])
+        shoulder_timestamps = shoulder.get('timestamps', [])
+        wrist_timestamps = wrist.get('timestamps', [])
+        
+        # 腰肩延迟 - 使用真实时间戳计算
+        if len(waist_peaks) > 0 and len(shoulder_peaks) > 0 and waist_timestamps and shoulder_timestamps:
+            for w_peak_idx in waist_peaks:
+                if w_peak_idx < len(waist_timestamps):
+                    w_peak_time = waist_timestamps[w_peak_idx]
+                    for s_peak_idx in shoulder_peaks:
+                        if s_peak_idx < len(shoulder_timestamps):
+                            s_peak_time = shoulder_timestamps[s_peak_idx]
+                            if s_peak_time > w_peak_time:  # 肩部峰值在腰部之后
+                                delay[0] = (s_peak_time - w_peak_time).total_seconds()
+                                break
+                    if delay[0] > 0:
+                        break
+        
+        # 肩腕延迟 - 使用真实时间戳计算
+        if len(shoulder_peaks) > 0 and len(wrist_peaks) > 0 and shoulder_timestamps and wrist_timestamps:
+            for s_peak_idx in shoulder_peaks:
+                if s_peak_idx < len(shoulder_timestamps):
+                    s_peak_time = shoulder_timestamps[s_peak_idx]
+                    for w_peak_idx in wrist_peaks:
+                        if w_peak_idx < len(wrist_timestamps):
+                            w_peak_time = wrist_timestamps[w_peak_idx]
+                            if w_peak_time > s_peak_time:  # 腕部峰值在肩部之后
+                                delay[1] = (w_peak_time - s_peak_time).total_seconds()
+                                break
+                    if delay[1] > 0:
+                        break
+        
+        # 如果基于时间戳的计算失败，回退到基于采样率的计算
+        if delay[0] == 0 and len(waist_peaks) > 0 and len(shoulder_peaks) > 0:
             for w_peak in waist_peaks:
                 for s_peak in shoulder_peaks:
                     if s_peak > w_peak:  # 肩部峰值在腰部之后
@@ -213,9 +291,7 @@ class BadmintonAnalysis:
                 if delay[0] > 0:
                     break
         
-        # 肩腕延迟
-        if len(shoulder_peaks) > 0 and len(wrist_peaks) > 0:
-            # 找到第一个有效的峰值对
+        if delay[1] == 0 and len(shoulder_peaks) > 0 and len(wrist_peaks) > 0:
             for s_peak in shoulder_peaks:
                 for w_peak in wrist_peaks:
                     if w_peak > s_peak:  # 腕部峰值在肩部之后

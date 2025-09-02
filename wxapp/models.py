@@ -77,7 +77,8 @@ class SensorData(models.Model):
     device_code = models.CharField(max_length=64, verbose_name='设备编码')
     sensor_type = models.CharField(max_length=20, choices=SENSOR_TYPE_CHOICES, default='unknown', verbose_name='传感器类型')
     data = models.TextField(verbose_name='传感器数据')  # JSON格式存储传感器数据
-    timestamp = models.DateTimeField(auto_now_add=True, verbose_name='时间戳')
+    timestamp = models.DateTimeField(auto_now_add=True, verbose_name='服务器时间戳')
+    esp32_timestamp = models.DateTimeField(null=True, blank=True, verbose_name='ESP32采集时间戳')
     
     class Meta:
         verbose_name = '传感器数据'

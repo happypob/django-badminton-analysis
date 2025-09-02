@@ -540,7 +540,19 @@ def esp32_upload_sensor_data(request):
 def esp32_batch_upload(request):
     """
     ESP32批量数据上传接口
-    支持一次上传多条传感器数据
+    支持一次上传多条传感器数据，现在支持ESP32时间戳
+    
+    参数:
+    - batch_data: JSON数组，每个元素包含:
+      - acc: [x, y, z] 加速度数据
+      - gyro: [x, y, z] 角速度数据  
+      - angle: [x, y, z] 角度数据
+      - timestamp: (可选) ESP32采集时间戳，支持:
+        * Unix时间戳（毫秒）: 1693574400000
+        * ISO字符串: "2025-09-01T15:30:00.000Z"
+    - device_code: 设备编码
+    - sensor_type: 传感器类型 (waist/shoulder/wrist/racket)
+    - session_id: (可选) 会话ID
     """
     if request.method == 'POST':
         try:
@@ -596,18 +608,41 @@ def esp32_batch_upload(request):
                     if not all(field in data_item for field in required_fields):
                         continue
                     
+                    # 处理ESP32时间戳
+                    esp32_timestamp = None
+                    if 'timestamp' in data_item:
+                        try:
+                            # 尝试解析ESP32时间戳（支持多种格式）
+                            timestamp_str = data_item['timestamp']
+                            if isinstance(timestamp_str, (int, float)):
+                                # Unix时间戳（毫秒）
+                                from datetime import timezone as dt_timezone
+                                esp32_timestamp = datetime.fromtimestamp(
+                                    timestamp_str / 1000.0, tz=dt_timezone.utc
+                                )
+                            elif isinstance(timestamp_str, str):
+                                # ISO格式字符串
+                                esp32_timestamp = timezone.datetime.fromisoformat(
+                                    timestamp_str.replace('Z', '+00:00')
+                                )
+                        except (ValueError, TypeError) as e:
+                            # 时间戳解析失败，记录错误但继续处理
+                            print(f"Warning: Failed to parse ESP32 timestamp for item {i}: {e}")
+                    
                     # 创建传感器数据对象
                     sensor_data_obj = SensorData.objects.create(
                         session=session,
                         device_code=device_code,
                         sensor_type=sensor_type,
-                        data=json.dumps(data_item)
+                        data=json.dumps(data_item),
+                        esp32_timestamp=esp32_timestamp
                     )
                     
                     created_data.append({
                         'index': i,
                         'data_id': sensor_data_obj.id,
-                        'timestamp': sensor_data_obj.timestamp.isoformat()
+                        'server_timestamp': sensor_data_obj.timestamp.isoformat(),
+                        'esp32_timestamp': esp32_timestamp.isoformat() if esp32_timestamp else None
                     })
                     
                 except Exception as e:
@@ -748,8 +783,13 @@ def generate_analysis_report(request):
 def analyze_session_data(session):
     """分析会话数据，使用真实的MATLAB分析逻辑"""
     try:
-        # 获取该会话的所有传感器数据
-        sensor_data = SensorData.objects.filter(session=session).order_by('timestamp')
+        # 获取该会话的所有传感器数据，优先按ESP32时间戳排序
+        esp32_data = SensorData.objects.filter(session=session, esp32_timestamp__isnull=False).order_by('esp32_timestamp')
+        if esp32_data.exists():
+            sensor_data = esp32_data
+        else:
+            # 如果没有ESP32时间戳，回退到服务器时间戳
+            sensor_data = SensorData.objects.filter(session=session).order_by('timestamp')
         
         if not sensor_data.exists():
             raise Exception("No sensor data found for this session")
@@ -845,11 +885,28 @@ def generate_detailed_report(analysis_result, session):
 def extract_angular_velocity_data(session):
     """从会话数据中提取角速度数据用于图表显示"""
     try:
-        # 获取各传感器的数据
-        waist_data = SensorData.objects.filter(session=session, sensor_type='waist').order_by('timestamp')
-        shoulder_data = SensorData.objects.filter(session=session, sensor_type='shoulder').order_by('timestamp')
-        wrist_data = SensorData.objects.filter(session=session, sensor_type='wrist').order_by('timestamp')
-        racket_data = SensorData.objects.filter(session=session, sensor_type='racket').order_by('timestamp')
+        # 获取各传感器的数据，优先按ESP32时间戳排序
+        def get_sensor_data_ordered(sensor_type):
+            # 先尝试获取有ESP32时间戳的数据
+            esp32_data = SensorData.objects.filter(
+                session=session, 
+                sensor_type=sensor_type,
+                esp32_timestamp__isnull=False
+            ).order_by('esp32_timestamp')
+            
+            if esp32_data.exists():
+                return esp32_data
+            else:
+                # 如果没有ESP32时间戳，回退到服务器时间戳
+                return SensorData.objects.filter(
+                    session=session, 
+                    sensor_type=sensor_type
+                ).order_by('timestamp')
+        
+        waist_data = get_sensor_data_ordered('waist')
+        shoulder_data = get_sensor_data_ordered('shoulder')
+        wrist_data = get_sensor_data_ordered('wrist')
+        racket_data = get_sensor_data_ordered('racket')
         
         # 提取角速度数据
         def extract_gyro_data(sensor_data):
@@ -863,9 +920,14 @@ def extract_angular_velocity_data(session):
                     # 计算角速度幅值
                     gyro_magnitude = (gyro[0]**2 + gyro[1]**2 + gyro[2]**2)**0.5
                     
-                    # 使用相对时间（毫秒）
+                    # 使用相对时间（毫秒），优先使用ESP32时间戳
                     if times:
-                        time_ms = (data.timestamp - sensor_data[0].timestamp).total_seconds() * 1000
+                        # 优先使用ESP32时间戳计算时间差
+                        if data.esp32_timestamp and sensor_data[0].esp32_timestamp:
+                            time_ms = (data.esp32_timestamp - sensor_data[0].esp32_timestamp).total_seconds() * 1000
+                        else:
+                            # 回退到服务器时间戳
+                            time_ms = (data.timestamp - sensor_data[0].timestamp).total_seconds() * 1000
                     else:
                         time_ms = 0
                     

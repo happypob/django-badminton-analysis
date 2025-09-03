@@ -12,7 +12,7 @@ urlpatterns = [
     path('mark_complete/', views.mark_data_collection_complete),  # 新增数据收集完成标记接口
     path('notify_esp32_start/', views.notify_esp32_start),
     path('notify_esp32_stop/', views.notify_esp32_stop),
-    path('test_udp_broadcast/', views.test_udp_broadcast),
+    path('test_udp_broadcast/', views.test_udp_broadcast),  # 现在使用WebSocket而非UDP
     path('get_analysis/', views.get_analysis_result),
     path('generate_report/', views.generate_analysis_report),
     path('upload_mat/', views.upload_mat_file),
@@ -36,4 +36,7 @@ urlpatterns = [
     path('esp32/poll_commands/', views.esp32_poll_commands, name='esp32_poll_commands'),
     path('esp32/status/', views.esp32_status_update, name='esp32_status_update'),
     path('esp32/heartbeat/', views.esp32_heartbeat, name='esp32_heartbeat'),
+    # WebSocket管理API端点
+    path('websocket/status/', views.websocket_status, name='websocket_status'),
+    path('websocket/send_command/', views.websocket_send_command, name='websocket_send_command'),
 ] 

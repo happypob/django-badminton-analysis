@@ -25,11 +25,16 @@ def home_view(request):
     </html>
     """)
 
+def websocket_test_view(request):
+    from django.shortcuts import render
+    return render(request, 'websocket_test.html')
+
 urlpatterns = [
     path('', home_view, name='home'),
     path('admin/', admin.site.urls),
     path('api/', include('wxapp.urls')),
     path('wxapp/', include('wxapp.urls')),  # 添加wxapp前缀
+    path('websocket-test/', websocket_test_view, name='websocket_test'),  # WebSocket测试页面
 ]
 
 # 开发环境静态文件处理

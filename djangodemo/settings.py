@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'channels',
     'wxapp',
 ]
 
@@ -71,6 +72,18 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'djangodemo.wsgi.application'
 
+# ASGI配置用于WebSocket
+ASGI_APPLICATION = 'djangodemo.asgi.application'
+
+# Channels配置
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],
+        },
+    },
+}
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases

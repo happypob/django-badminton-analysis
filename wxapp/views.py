@@ -20,6 +20,19 @@ import numpy as np
 from django.db import models
 import socket
 import struct
+import asyncio
+from asgiref.sync import sync_to_async
+from .websocket_manager import (
+    websocket_manager, 
+    send_esp32_start_command, 
+    send_esp32_stop_command,
+    notify_esp32_session_start,
+    notify_esp32_session_stop,
+    check_esp32_connection,
+    get_esp32_status,
+    broadcast_start_collection,
+    broadcast_stop_collection
+)
 
 # Create your views here.
 
@@ -27,12 +40,80 @@ import struct
 APPID = '你的appid'
 APPSECRET = '你的appsecret'
 
-# UDP广播配置
+# UDP广播配置（保留作为备用）
 UDP_BROADCAST_PORT = 8888
 UDP_BROADCAST_ADDR = '255.255.255.255'
 
+async def send_websocket_broadcast(message_data, device_filter=None):
+    """
+    通过WebSocket发送广播消息（完全替代UDP广播）
+    
+    Args:
+        message_data: 消息数据（字符串或字典）
+        device_filter: 设备过滤列表，None表示广播给所有设备
+    
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    try:
+        # 解析消息数据
+        if isinstance(message_data, str):
+            data = json.loads(message_data)
+        else:
+            data = message_data
+        
+        command = data.get('command')
+        session_id = data.get('session_id')
+        device_code = data.get('device_code')
+        
+        # 根据命令类型发送相应的WebSocket消息
+        if command == 'START_COLLECTION':
+            if device_code:
+                # 向特定设备发送
+                success = await notify_esp32_session_start(device_code, session_id)
+                return success, "WebSocket开始采集指令发送成功" if success else "WebSocket开始采集指令发送失败"
+            else:
+                # 向所有连接的设备广播
+                success_count = await broadcast_start_collection(session_id, device_filter)
+                return success_count > 0, f"WebSocket广播开始采集指令发送给 {success_count} 个设备"
+                
+        elif command == 'STOP_COLLECTION':
+            if device_code:
+                # 向特定设备发送
+                success = await notify_esp32_session_stop(device_code, session_id)
+                return success, "WebSocket停止采集指令发送成功" if success else "WebSocket停止采集指令发送失败"
+            else:
+                # 向所有连接的设备广播
+                success_count = await broadcast_stop_collection(session_id, device_filter)
+                return success_count > 0, f"WebSocket广播停止采集指令发送给 {success_count} 个设备"
+                
+        elif command == 'TEST':
+            # 测试消息广播
+            success_count = await websocket_manager.broadcast_to_devices(
+                'test_message',
+                {
+                    'message': data.get('message', 'Test'),
+                    'device_code': device_code,
+                    'timestamp': data.get('timestamp')
+                },
+                device_filter
+            )
+            return success_count > 0, f"WebSocket测试消息发送给 {success_count} 个设备"
+        else:
+            # 通用消息广播
+            success_count = await websocket_manager.broadcast_to_devices(
+                'general_message',
+                data,
+                device_filter
+            )
+            return success_count > 0, f"WebSocket通用消息发送给 {success_count} 个设备"
+
+    except Exception as e:
+        return False, f"WebSocket广播发送失败: {str(e)}"
+
+# 保留原UDP广播函数作为备用
 def send_udp_broadcast(message):
-    """发送UDP广播消息"""
+    """发送UDP广播消息（备用方案）"""
     try:
         # 创建UDP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -43,9 +124,9 @@ def send_udp_broadcast(message):
         sock.sendto(message.encode('utf-8'), (UDP_BROADCAST_ADDR, UDP_BROADCAST_PORT))
         sock.close()
         
-        return True, "广播发送成功"
+        return True, "UDP广播发送成功"
     except Exception as e:
-        return False, f"广播发送失败: {str(e)}"
+        return False, f"UDP广播发送失败: {str(e)}"
 
 def get_or_create_wx_user(openid):
     """统一处理微信用户创建逻辑"""
@@ -201,10 +282,10 @@ def start_collection_session(request):
 # 新增接口：开始正式数据采集（从calibrating变为collecting）
 @csrf_exempt
 def start_data_collection(request):
-    """将会话状态从calibrating变为collecting，开始正式数据采集，并发送UDP广播"""
+    """将会话状态从calibrating变为collecting，开始正式数据采集，并通过WebSocket通知ESP32"""
     if request.method == 'POST':
         session_id = request.POST.get('session_id')
-        device_code = request.POST.get('device_code', '2025001')  # 默认设备码
+        device_code = request.POST.get('device_code')  # 可选，如果不指定则广播给所有设备
         
         if not session_id:
             return JsonResponse({'error': 'session_id required'}, status=400)
@@ -222,33 +303,40 @@ def start_data_collection(request):
             session.status = 'collecting'
             session.save()
             
-            # 发送UDP广播通知ESP32开始采集
-            broadcast_message = json.dumps({
+            # 通过WebSocket通知ESP32开始采集
+            broadcast_message = {
                 'command': 'START_COLLECTION',
                 'session_id': session_id,
-                'device_code': device_code,
                 'timestamp': datetime.now().isoformat()
-            })
+            }
             
-            success, message = send_udp_broadcast(broadcast_message)
+            if device_code:
+                broadcast_message['device_code'] = device_code
+            
+            # 使用异步WebSocket广播
+            async def send_websocket_command():
+                return await send_websocket_broadcast(broadcast_message)
+            
+            success, message = asyncio.run(send_websocket_command())
             
             if success:
                 return JsonResponse({
-                    'msg': 'Data collection started and ESP32 notified',
+                    'msg': 'Data collection started and ESP32 notified via WebSocket',
                     'session_id': session.id,
                     'status': 'collecting',
-                    'device_code': device_code,
-                    'broadcast_message': broadcast_message,
-                    'broadcast_port': UDP_BROADCAST_PORT,
+                    'device_code': device_code or 'all_devices',
+                    'websocket_message': broadcast_message,
+                    'communication_method': 'WebSocket',
+                    'result': message,
                     'timestamp': session.start_time.isoformat()
                 })
             else:
                 return JsonResponse({
-                    'msg': 'Data collection started but UDP broadcast failed',
+                    'msg': 'Data collection started but WebSocket notification failed',
                     'session_id': session.id,
                     'status': 'collecting',
-                    'device_code': device_code,
-                    'broadcast_error': message,
+                    'device_code': device_code or 'all_devices',
+                    'websocket_error': message,
                     'timestamp': session.start_time.isoformat()
                 })
             
@@ -267,7 +355,7 @@ def start_data_collection(request):
             'optional_params': {
                 'device_code': 'string - 设备码 (默认: 2025001)'
             },
-            'description': '将会话状态从calibrating变为collecting，开始正式数据采集，并发送UDP广播通知ESP32',
+            'description': '将会话状态从calibrating变为collecting，开始正式数据采集，并通过WebSocket通知ESP32',
             'example': {
                 'session_id': '123',
                 'device_code': '2025001'
@@ -556,29 +644,57 @@ def esp32_batch_upload(request):
     """
     if request.method == 'POST':
         try:
+            # 详细日志记录请求信息
+            print(f"[ESP32_BATCH_UPLOAD] 收到请求:")
+            print(f"  Content-Type: {request.content_type}")
+            print(f"  POST数据: {dict(request.POST)}")
+            print(f"  Body长度: {len(request.body)}")
+            
             # 获取批量数据
             batch_data = request.POST.get('batch_data')
             device_code = request.POST.get('device_code')
             sensor_type = request.POST.get('sensor_type')
             session_id = request.POST.get('session_id')
             
+            print(f"  batch_data: {batch_data[:100] if batch_data else 'None'}...")
+            print(f"  device_code: {device_code}")
+            print(f"  sensor_type: {sensor_type}")
+            print(f"  session_id: {session_id}")
+            
             if not batch_data or not device_code or not sensor_type:
-                return JsonResponse({
+                error_msg = {
                     'error': 'Missing required parameters',
-                    'required': ['batch_data', 'device_code', 'sensor_type']
-                }, status=400)
+                    'required': ['batch_data', 'device_code', 'sensor_type'],
+                    'received': {
+                        'batch_data': 'present' if batch_data else 'missing',
+                        'device_code': 'present' if device_code else 'missing',
+                        'sensor_type': 'present' if sensor_type else 'missing'
+                    }
+                }
+                print(f"[ESP32_BATCH_UPLOAD] 参数错误: {error_msg}")
+                return JsonResponse(error_msg, status=400)
             
             # 解析批量数据
             try:
                 data_list = json.loads(batch_data)
+                print(f"[ESP32_BATCH_UPLOAD] JSON解析成功，数据类型: {type(data_list)}")
                 if not isinstance(data_list, list):
-                    return JsonResponse({
-                        'error': 'batch_data must be a JSON array'
-                    }, status=400)
-            except json.JSONDecodeError:
-                return JsonResponse({
-                    'error': 'Invalid JSON format for batch_data'
-                }, status=400)
+                    error_msg = {
+                        'error': 'batch_data must be a JSON array',
+                        'received_type': str(type(data_list)),
+                        'data_preview': str(data_list)[:200]
+                    }
+                    print(f"[ESP32_BATCH_UPLOAD] 数据类型错误: {error_msg}")
+                    return JsonResponse(error_msg, status=400)
+                print(f"[ESP32_BATCH_UPLOAD] 批量数据包含 {len(data_list)} 个项目")
+            except json.JSONDecodeError as e:
+                error_msg = {
+                    'error': 'Invalid JSON format for batch_data',
+                    'json_error': str(e),
+                    'data_preview': batch_data[:200] if batch_data else 'None'
+                }
+                print(f"[ESP32_BATCH_UPLOAD] JSON解析错误: {error_msg}")
+                return JsonResponse(error_msg, status=400)
             
             # 获取会话
             session = None
@@ -661,9 +777,20 @@ def esp32_batch_upload(request):
             })
             
         except Exception as e:
-            return JsonResponse({
-                'error': f'Batch upload failed: {str(e)}'
-            }, status=500)
+            import traceback
+            error_details = {
+                'error': f'Batch upload failed: {str(e)}',
+                'error_type': type(e).__name__,
+                'traceback': traceback.format_exc(),
+                'request_info': {
+                    'method': request.method,
+                    'content_type': request.content_type,
+                    'post_keys': list(request.POST.keys()) if hasattr(request, 'POST') else [],
+                    'body_length': len(request.body) if hasattr(request, 'body') else 0
+                }
+            }
+            print(f"[ESP32_BATCH_UPLOAD] 异常错误: {error_details}")
+            return JsonResponse(error_details, status=500)
     
     else:
         return JsonResponse({
@@ -1730,10 +1857,10 @@ def esp32_mark_upload_complete(request):
 
 @csrf_exempt
 def notify_esp32_start(request):
-    """通过UDP广播通知ESP32开始采集"""
+    """通过WebSocket通知ESP32开始采集（完全替代UDP）"""
     if request.method == 'POST':
         session_id = request.POST.get('session_id')
-        device_code = request.POST.get('device_code', '2025001')  # 默认设备码
+        device_code = request.POST.get('device_code')  # 可选，如果不指定则广播给所有设备
         
         if not session_id:
             return JsonResponse({'error': 'session_id required'}, status=400)
@@ -1743,23 +1870,30 @@ def notify_esp32_start(request):
             session = DataCollectionSession.objects.get(id=session_id)
             
             # 构建广播消息
-            broadcast_message = json.dumps({
+            broadcast_message = {
                 'command': 'START_COLLECTION',
                 'session_id': session_id,
-                'device_code': device_code,
                 'timestamp': datetime.now().isoformat()
-            })
+            }
             
-            # 发送UDP广播
-            success, message = send_udp_broadcast(broadcast_message)
+            if device_code:
+                broadcast_message['device_code'] = device_code
+            
+            # 通过WebSocket发送广播（完全替代UDP）
+            async def send_websocket_command():
+                return await send_websocket_broadcast(broadcast_message)
+            
+            # 使用sync_to_async运行异步函数
+            success, message = asyncio.run(send_websocket_command())
             
             if success:
                 return JsonResponse({
-                    'msg': 'UDP广播发送成功，ESP32应该收到开始采集指令',
+                    'msg': 'WebSocket广播发送成功，ESP32应该收到开始采集指令',
                     'session_id': session_id,
-                    'device_code': device_code,
-                    'broadcast_message': broadcast_message,
-                    'broadcast_port': UDP_BROADCAST_PORT
+                    'device_code': device_code or 'all_devices',
+                    'websocket_message': broadcast_message,
+                    'communication_method': 'WebSocket',
+                    'result': message
                 })
             else:
                 return JsonResponse({
@@ -1773,7 +1907,7 @@ def notify_esp32_start(request):
     
     elif request.method == 'GET':
         return JsonResponse({
-            'msg': 'UDP广播通知ESP32开始采集',
+            'msg': 'WebSocket广播通知ESP32开始采集',
             'method': 'POST',
             'required_params': {
                 'session_id': 'int - 会话ID'
@@ -1781,10 +1915,11 @@ def notify_esp32_start(request):
             'optional_params': {
                 'device_code': 'string - 设备码 (默认: 2025001)'
             },
-            'broadcast_config': {
-                'port': UDP_BROADCAST_PORT,
-                'address': UDP_BROADCAST_ADDR
-            },
+            'communication_method': 'WebSocket',
+            'websocket_endpoints': [
+                'ws/esp32/{device_code}/ - ESP32设备连接',
+                'ws/miniprogram/{user_id}/ - 小程序连接'
+            ],
             'example': {
                 'session_id': '123',
                 'device_code': '2025001'
@@ -1797,27 +1932,27 @@ def notify_esp32_start(request):
 
 @csrf_exempt
 def notify_esp32_stop(request):
-    """通过UDP广播通知ESP32停止采集"""
+    """通过WebSocket通知ESP32停止采集"""
     if request.method == 'POST':
         device_code = request.POST.get('device_code', '2025001')  # 默认设备码
         
         try:
             # 构建广播消息
-            broadcast_message = json.dumps({
+            broadcast_message = {
                 'command': 'STOP_COLLECTION',
                 'device_code': device_code,
                 'timestamp': datetime.now().isoformat()
-            })
+            }
             
-            # 发送UDP广播
-            success, message = send_udp_broadcast(broadcast_message)
+            # 通过WebSocket发送广播
+            success, message = send_websocket_broadcast(broadcast_message)
             
             if success:
                 return JsonResponse({
-                    'msg': 'UDP广播发送成功，ESP32应该收到停止采集指令',
+                    'msg': 'WebSocket广播发送成功，ESP32应该收到停止采集指令',
                     'device_code': device_code,
-                    'broadcast_message': broadcast_message,
-                    'broadcast_port': UDP_BROADCAST_PORT
+                    'websocket_message': broadcast_message,
+                    'communication_method': 'WebSocket'
                 })
             else:
                 return JsonResponse({
@@ -1849,30 +1984,36 @@ def notify_esp32_stop(request):
 
 @csrf_exempt
 def test_udp_broadcast(request):
-    """测试UDP广播功能"""
+    """测试WebSocket广播功能（完全替代UDP）"""
     if request.method == 'POST':
         message = request.POST.get('message', 'TEST_BROADCAST')
-        device_code = request.POST.get('device_code', '2025001')  # 默认设备码
+        device_code = request.POST.get('device_code')  # 可选，如果不指定则广播给所有设备
         
         try:
             # 构建测试广播消息
-            broadcast_message = json.dumps({
+            broadcast_message = {
                 'command': 'TEST',
                 'message': message,
-                'device_code': device_code,
                 'timestamp': datetime.now().isoformat()
-            })
+            }
             
-            # 发送UDP广播
-            success, result_message = send_udp_broadcast(broadcast_message)
+            if device_code:
+                broadcast_message['device_code'] = device_code
+            
+            # 发送WebSocket广播（完全替代UDP）
+            async def send_websocket_test():
+                return await send_websocket_broadcast(broadcast_message)
+            
+            success, result_message = asyncio.run(send_websocket_test())
             
             if success:
                 return JsonResponse({
-                    'msg': 'UDP广播测试成功',
-                    'device_code': device_code,
+                    'msg': 'WebSocket广播测试成功',
+                    'device_code': device_code or 'all_devices',
                     'broadcast_message': broadcast_message,
-                    'broadcast_port': UDP_BROADCAST_PORT,
-                    'result': result_message
+                    'communication_method': 'WebSocket',
+                    'result': result_message,
+                    'connected_devices': websocket_manager.get_connected_devices()
                 })
             else:
                 return JsonResponse({
@@ -1880,23 +2021,26 @@ def test_udp_broadcast(request):
                 }, status=500)
                 
         except Exception as e:
-            return JsonResponse({'error': f'广播测试失败: {str(e)}'}, status=500)
+            return JsonResponse({'error': f'WebSocket广播测试失败: {str(e)}'}, status=500)
     
     elif request.method == 'GET':
         return JsonResponse({
-            'msg': 'UDP广播测试接口',
+            'msg': 'WebSocket广播测试接口（替代UDP）',
             'method': 'POST',
             'optional_params': {
                 'message': 'string - 自定义测试消息',
-                'device_code': 'string - 设备码 (默认: 2025001)'
+                'device_code': 'string - 设备码（可选，不指定则广播给所有设备）'
             },
-            'broadcast_config': {
-                'port': UDP_BROADCAST_PORT,
-                'address': UDP_BROADCAST_ADDR
+            'websocket_config': {
+                'esp32_endpoint': '/ws/esp32/{device_code}/',
+                'miniprogram_endpoint': '/ws/miniprogram/{user_id}/',
+                'admin_endpoint': '/ws/admin/'
             },
+            'connected_devices': websocket_manager.get_connected_devices(),
+            'connected_users': websocket_manager.get_connected_users(),
             'example': {
                 'message': 'Hello ESP32!',
-                'device_code': '2025001'
+                'device_code': 'ESP32_001'
             }
         })
     
@@ -1961,48 +2105,28 @@ def notify_device_start(request):
             # 验证会话存在
             session = DataCollectionSession.objects.get(id=session_id)
             
-            # 从注册的设备IP映射中获取ESP32的IP地址
-            if hasattr(register_device_ip, 'device_ip_map'):
-                device_ip_map = register_device_ip.device_ip_map
-            else:
-                device_ip_map = {}
-            
-            esp32_ip = device_ip_map.get(device_code)
-            if not esp32_ip:
+            # 检查ESP32设备是否通过WebSocket连接
+            if not check_esp32_connection(device_code):
                 return JsonResponse({
-                    'error': f'Device {device_code} not registered or IP not found'
+                    'error': f'Device {device_code} not connected via WebSocket'
                 }, status=404)
             
-            # 通知ESP32开始采集
-            import requests
-            try:
-                esp32_response = requests.post(
-                    f'http://{esp32_ip}/start_collection',
-                    data={'session_id': session_id, 'device_code': device_code},
-                    timeout=5
-                )
-                
-                if esp32_response.status_code == 200:
-                    return JsonResponse({
-                        'msg': f'Device {device_code} notified to start collection',
-                        'session_id': session_id,
-                        'device_code': device_code,
-                        'esp32_ip': esp32_ip,
-                        'esp32_response': esp32_response.text
-                    })
-                else:
-                    return JsonResponse({
-                        'error': f'ESP32 responded with status {esp32_response.status_code}',
-                        'device_code': device_code,
-                        'esp32_ip': esp32_ip,
-                        'esp32_response': esp32_response.text
-                    }, status=500)
-                    
-            except requests.exceptions.RequestException as e:
+            # 通过WebSocket通知ESP32开始采集
+            success = send_esp32_start_command(device_code, session_id)
+            
+            if success:
                 return JsonResponse({
-                    'error': f'Failed to notify device {device_code}: {str(e)}',
+                    'msg': f'Device {device_code} notified to start collection via WebSocket',
+                    'session_id': session_id,
                     'device_code': device_code,
-                    'esp32_ip': esp32_ip
+                    'communication_method': 'WebSocket',
+                    'connection_status': 'connected'
+                })
+            else:
+                return JsonResponse({
+                    'error': f'Failed to notify device {device_code} via WebSocket',
+                    'device_code': device_code,
+                    'communication_method': 'WebSocket'
                 }, status=500)
                 
         except DataCollectionSession.DoesNotExist:
@@ -2037,48 +2161,27 @@ def notify_device_stop(request):
             return JsonResponse({'error': 'device_code required'}, status=400)
         
         try:
-            # 根据设备ID获取ESP32的IP地址
-            device_ip_map = {
-                '2025001': '192.168.1.100',
-                '2025002': '192.168.1.101',
-                '2025003': '192.168.1.102',
-            }
-            
-            esp32_ip = device_ip_map.get(device_code)
-            if not esp32_ip:
+            # 检查ESP32设备是否通过WebSocket连接
+            if not check_esp32_connection(device_code):
                 return JsonResponse({
-                    'error': f'Device {device_code} not found in IP mapping'
+                    'error': f'Device {device_code} not connected via WebSocket'
                 }, status=404)
             
-            # 通知ESP32停止采集
-            import requests
-            try:
-                esp32_response = requests.post(
-                    f'http://{esp32_ip}/stop_collection',
-                    data={'device_code': device_code, 'command': 'STOP_COLLECTION'},
-                    timeout=5
-                )
-                
-                if esp32_response.status_code == 200:
-                    return JsonResponse({
-                        'msg': f'Device {device_code} notified to stop collection',
-                        'device_code': device_code,
-                        'esp32_ip': esp32_ip,
-                        'esp32_response': esp32_response.text
-                    })
-                else:
-                    return JsonResponse({
-                        'error': f'ESP32 responded with status {esp32_response.status_code}',
-                        'device_code': device_code,
-                        'esp32_ip': esp32_ip,
-                        'esp32_response': esp32_response.text
-                    }, status=500)
-                    
-            except requests.exceptions.RequestException as e:
+            # 通过WebSocket通知ESP32停止采集
+            success = send_esp32_stop_command(device_code, None)  # 停止命令不需要session_id
+            
+            if success:
                 return JsonResponse({
-                    'error': f'Failed to notify device {device_code}: {str(e)}',
+                    'msg': f'Device {device_code} notified to stop collection via WebSocket',
                     'device_code': device_code,
-                    'esp32_ip': esp32_ip
+                    'communication_method': 'WebSocket',
+                    'connection_status': 'connected'
+                })
+            else:
+                return JsonResponse({
+                    'error': f'Failed to notify device {device_code} via WebSocket',
+                    'device_code': device_code,
+                    'communication_method': 'WebSocket'
                 }, status=500)
                 
         except Exception as e:
@@ -2109,47 +2212,24 @@ def get_device_status(request):
             return JsonResponse({'error': 'device_code required'}, status=400)
         
         try:
-            # 根据设备ID获取ESP32的IP地址
-            device_ip_map = {
-                '2025001': '192.168.1.100',
-                '2025002': '192.168.1.101',
-                '2025003': '192.168.1.102',
-            }
+            # 通过WebSocket获取ESP32设备状态
+            status_info = get_esp32_status(device_code)
             
-            esp32_ip = device_ip_map.get(device_code)
-            if not esp32_ip:
+            if status_info['connected']:
                 return JsonResponse({
-                    'error': f'Device {device_code} not found in IP mapping'
-                }, status=404)
-            
-            # 获取ESP32状态
-            import requests
-            try:
-                esp32_response = requests.get(
-                    f'http://{esp32_ip}/status',
-                    timeout=5
-                )
-                
-                if esp32_response.status_code == 200:
-                    return JsonResponse({
-                        'msg': f'Device {device_code} status retrieved',
-                        'device_code': device_code,
-                        'esp32_ip': esp32_ip,
-                        'status': esp32_response.json()
-                    })
-                else:
-                    return JsonResponse({
-                        'error': f'ESP32 responded with status {esp32_response.status_code}',
-                        'device_code': device_code,
-                        'esp32_ip': esp32_ip
-                    }, status=500)
-                    
-            except requests.exceptions.RequestException as e:
-                return JsonResponse({
-                    'error': f'Failed to get device {device_code} status: {str(e)}',
+                    'msg': f'Device {device_code} status retrieved via WebSocket',
                     'device_code': device_code,
-                    'esp32_ip': esp32_ip
-                }, status=500)
+                    'communication_method': 'WebSocket',
+                    'connection_status': 'connected',
+                    'status': status_info
+                })
+            else:
+                return JsonResponse({
+                    'error': f'Device {device_code} not connected via WebSocket',
+                    'device_code': device_code,
+                    'communication_method': 'WebSocket',
+                    'connection_status': 'disconnected'
+                }, status=404)
                 
         except Exception as e:
             return JsonResponse({'error': f'Operation failed: {str(e)}'}, status=500)
@@ -2336,3 +2416,242 @@ def esp32_heartbeat(request):
     
     else:
         return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+def perform_analysis(session_id):
+    """
+    执行数据分析的辅助函数（用于WebSocket Consumer）
+    """
+    try:
+        session = DataCollectionSession.objects.get(id=session_id)
+        sensor_data = SensorData.objects.filter(session=session).order_by('timestamp')
+        
+        if not sensor_data.exists():
+            raise Exception("No sensor data found for analysis")
+        
+        # 使用BadmintonAnalysis进行分析
+        analyzer = BadmintonAnalysis()
+        analysis_result = analyzer.analyze_session(sensor_data)
+        
+        # 保存分析结果
+        from .models import AnalysisResult
+        result_obj, created = AnalysisResult.objects.get_or_create(
+            session=session,
+            defaults={
+                'phase_delay': analysis_result['phase_delay'],
+                'energy_ratio': analysis_result['energy_ratio'],
+                'rom_data': analysis_result['rom_data']
+            }
+        )
+        
+        # 更新会话状态为已完成
+        session.status = 'completed'
+        session.end_time = timezone.now()
+        session.save()
+        
+        # 通知小程序用户分析完成
+        if session.user:
+            from .websocket_manager import websocket_manager
+            websocket_manager.notify_analysis_complete(
+                str(session.user.id), 
+                session_id, 
+                analysis_result
+            )
+        
+        return True, analysis_result
+        
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"数据分析失败: {str(e)}")
+        return False, str(e)
+
+@csrf_exempt
+def websocket_status(request):
+    """WebSocket连接状态查询API"""
+    if request.method == 'GET':
+        try:
+            connected_devices = websocket_manager.get_connected_devices()
+            connected_users = websocket_manager.get_connected_users()
+            
+            return JsonResponse({
+                'websocket_status': 'active',
+                'connected_devices': {
+                    'count': len(connected_devices),
+                    'devices': connected_devices
+                },
+                'connected_users': {
+                    'count': len(connected_users),
+                    'users': connected_users
+                },
+                'endpoints': {
+                    'esp32': '/ws/esp32/{device_code}/',
+                    'miniprogram': '/ws/miniprogram/{user_id}/',
+                    'admin': '/ws/admin/'
+                },
+                'timestamp': datetime.now().isoformat()
+            })
+        except Exception as e:
+            return JsonResponse({'error': f'获取WebSocket状态失败: {str(e)}'}, status=500)
+    else:
+        return JsonResponse({'error': 'GET method required'}, status=405)
+
+@csrf_exempt
+def websocket_send_command(request):
+    """WebSocket命令发送API"""
+    if request.method == 'POST':
+        try:
+            command_type = request.POST.get('command_type')
+            device_code = request.POST.get('device_code')
+            session_id = request.POST.get('session_id')
+            message = request.POST.get('message')
+            
+            if not command_type:
+                return JsonResponse({'error': 'command_type required'}, status=400)
+            
+            # 构建命令消息
+            command_message = {
+                'command': command_type.upper(),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            if session_id:
+                command_message['session_id'] = session_id
+            if device_code:
+                command_message['device_code'] = device_code
+            if message:
+                command_message['message'] = message
+            
+            # 发送WebSocket命令
+            async def send_websocket_command():
+                return await send_websocket_broadcast(command_message)
+            
+            success, result_message = asyncio.run(send_websocket_command())
+            
+            if success:
+                return JsonResponse({
+                    'msg': 'WebSocket命令发送成功',
+                    'command_type': command_type,
+                    'device_code': device_code or 'all_devices',
+                    'command_message': command_message,
+                    'result': result_message,
+                    'timestamp': datetime.now().isoformat()
+                })
+            else:
+                return JsonResponse({
+                    'error': result_message
+                }, status=500)
+                
+        except Exception as e:
+            return JsonResponse({'error': f'发送WebSocket命令失败: {str(e)}'}, status=500)
+    
+    elif request.method == 'GET':
+        return JsonResponse({
+            'msg': 'WebSocket命令发送API',
+            'method': 'POST',
+            'required_params': {
+                'command_type': 'string - 命令类型 (start_collection, stop_collection, test, etc.)'
+            },
+            'optional_params': {
+                'device_code': 'string - 设备码（不指定则广播给所有设备）',
+                'session_id': 'int - 会话ID',
+                'message': 'string - 自定义消息内容'
+            },
+            'examples': [
+                {
+                    'command_type': 'start_collection',
+                    'session_id': '123',
+                    'device_code': 'ESP32_001'
+                },
+                {
+                    'command_type': 'test',
+                    'message': 'Hello ESP32!',
+                    'device_code': 'ESP32_001'
+                }
+            ]
+        })
+    else:
+        return JsonResponse({'error': 'POST or GET method required'}, status=405)
+
+async def perform_analysis(session_id):
+    """
+    异步执行数据分析
+    这个函数被ESP32Consumer在upload_complete时调用
+    """
+    try:
+        # 获取会话和传感器数据
+        session = await sync_to_async(DataCollectionSession.objects.get)(id=session_id)
+        sensor_data = await sync_to_async(list)(
+            SensorData.objects.filter(session_id=session_id).order_by('timestamp')
+        )
+        
+        if not sensor_data:
+            await sync_to_async(session.save)()
+            return False
+        
+        # 执行分析
+        analysis = BadmintonAnalysis()
+        
+        # 准备数据进行分析
+        data_for_analysis = []
+        for data in sensor_data:
+            data_for_analysis.append({
+                'timestamp': data.timestamp,
+                'accel_x': data.accel_x,
+                'accel_y': data.accel_y,
+                'accel_z': data.accel_z,
+                'gyro_x': data.gyro_x,
+                'gyro_y': data.gyro_y,
+                'gyro_z': data.gyro_z,
+                'angle_x': data.angle_x,
+                'angle_y': data.angle_y,
+                'angle_z': data.angle_z,
+                'sensor_type': data.sensor_type
+            })
+        
+        # 执行分析
+        analysis_result = analysis.analyze(data_for_analysis)
+        
+        # 保存分析结果
+        result_obj = await sync_to_async(AnalysisResult.objects.create)(
+            session=session,
+            result=analysis_result,
+            created_at=timezone.now()
+        )
+        
+        # 更新会话状态
+        session.status = 'completed'
+        await sync_to_async(session.save)()
+        
+        # 通过WebSocket通知用户分析完成
+        if hasattr(session, 'user') and session.user:
+            user_id = str(session.user.id)
+            await websocket_manager.notify_analysis_complete(
+                user_id, 
+                session_id, 
+                analysis_result
+            )
+        
+        # 通知管理后台
+        await websocket_manager.notify_system_event(
+            f"会话 {session_id} 分析完成", 
+            'info'
+        )
+        
+        return True
+        
+    except Exception as e:
+        # 更新会话状态为错误
+        try:
+            session = await sync_to_async(DataCollectionSession.objects.get)(id=session_id)
+            session.status = 'error'
+            await sync_to_async(session.save)()
+        except:
+            pass
+        
+        # 通知管理后台错误
+        await websocket_manager.notify_system_event(
+            f"会话 {session_id} 分析失败: {str(e)}", 
+            'error'
+        )
+        
+        return False

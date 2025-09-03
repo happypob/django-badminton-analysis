@@ -73,8 +73,15 @@ class ESP32Consumer(AsyncWebsocketConsumer):
     async def receive(self, text_data):
         """处理接收到的WebSocket消息"""
         try:
+            # 添加详细的调试日志
+            logger.info(f"ESP32设备 {self.device_code} 收到原始消息: {text_data}")
+            
             data = json.loads(text_data)
             message_type = data.get('type')
+            
+            # 记录解析后的消息内容
+            logger.info(f"ESP32设备 {self.device_code} 解析后消息: {data}")
+            logger.info(f"ESP32设备 {self.device_code} 消息类型: {message_type}")
             
             if message_type == 'heartbeat':
                 await self.handle_heartbeat(data)
@@ -88,10 +95,13 @@ class ESP32Consumer(AsyncWebsocketConsumer):
                 await self.handle_batch_sensor_data(data)
             elif message_type == 'upload_complete':
                 await self.handle_upload_complete(data)
+            elif message_type is None or message_type == '':
+                await self.send_error("消息缺少type字段")
             else:
                 await self.send_error(f"未知消息类型: {message_type}")
                 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.error(f"ESP32设备 {self.device_code} JSON解析错误: {str(e)}")
             await self.send_error("JSON格式错误")
         except Exception as e:
             logger.error(f"处理WebSocket消息时发生错误: {str(e)}")

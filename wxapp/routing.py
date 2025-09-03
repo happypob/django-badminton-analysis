@@ -11,4 +11,6 @@ websocket_urlpatterns = [
     re_path(r'ws/miniprogram/(?P<user_id>\w+)/$', consumers.MiniProgramConsumer.as_asgi()),
     # 管理后台WebSocket连接
     re_path(r'ws/admin/$', consumers.AdminConsumer.as_asgi()),
+    # 默认WebSocket连接（处理根路径）
+    re_path(r'$', consumers.DefaultConsumer.as_asgi()),
 ] 

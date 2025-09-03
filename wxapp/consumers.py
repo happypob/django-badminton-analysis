@@ -597,4 +597,60 @@ class AdminConsumer(AsyncWebsocketConsumer):
             return device_list
         except Exception as e:
             logger.error(f"获取设备列表时发生错误: {str(e)}")
-            return [] 
+            return []
+
+
+class DefaultConsumer(AsyncWebsocketConsumer):
+    """默认WebSocket消费者，处理根路径连接"""
+    
+    async def connect(self):
+        """处理WebSocket连接"""
+        await self.accept()
+        
+        # 发送欢迎消息和使用指南
+        await self.send(text_data=json.dumps({
+            'type': 'welcome',
+            'message': '欢迎连接羽毛球分析系统WebSocket服务',
+            'available_endpoints': {
+                'esp32_devices': '/ws/esp32/{device_code}/',
+                'miniprogram_users': '/ws/miniprogram/{user_id}/',
+                'admin_panel': '/ws/admin/'
+            },
+            'instructions': {
+                'esp32': '请使用 /ws/esp32/您的设备编码/ 连接',
+                'miniprogram': '请使用 /ws/miniprogram/用户ID/ 连接',
+                'admin': '请使用 /ws/admin/ 连接管理后台'
+            },
+            'timestamp': datetime.now().isoformat()
+        }))
+        
+        logger.info(f"默认WebSocket连接建立: {self.scope['client']}")
+    
+    async def disconnect(self, close_code):
+        """处理WebSocket断开连接"""
+        logger.info(f"默认WebSocket连接断开: {self.scope['client']}")
+    
+    async def receive(self, text_data):
+        """处理接收到的WebSocket消息"""
+        try:
+            data = json.loads(text_data)
+            
+            # 发送使用指南响应
+            await self.send(text_data=json.dumps({
+                'type': 'usage_guide',
+                'message': '此为根路径连接，请使用正确的端点',
+                'received_data': data,
+                'correct_endpoints': {
+                    'esp32': 'ws://175.178.100.179:8000/ws/esp32/{device_code}/',
+                    'miniprogram': 'ws://175.178.100.179:8000/ws/miniprogram/{user_id}/',
+                    'admin': 'ws://175.178.100.179:8000/ws/admin/'
+                },
+                'timestamp': datetime.now().isoformat()
+            }))
+            
+        except json.JSONDecodeError:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'JSON格式错误',
+                'timestamp': datetime.now().isoformat()
+            })) 

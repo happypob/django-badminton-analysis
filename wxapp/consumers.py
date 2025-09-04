@@ -328,11 +328,23 @@ class ESP32Consumer(AsyncWebsocketConsumer):
     def trigger_analysis(self, session_id):
         """触发数据分析"""
         try:
-            from .views import perform_analysis
-            perform_analysis(session_id)
+            # 使用同步版本的分析函数
+            from .views import analyze_session_data
+            from .models import DataCollectionSession
+            
+            session = DataCollectionSession.objects.get(id=session_id)
+            analysis_result = analyze_session_data(session)
+            logger.info(f"会话 {session_id} 分析完成，结果ID: {analysis_result.id}")
             return True
         except Exception as e:
             logger.error(f"触发数据分析时发生错误: {str(e)}")
+            # 将会话状态设置为错误状态
+            try:
+                session = DataCollectionSession.objects.get(id=session_id)
+                session.status = 'stopped'
+                session.save()
+            except:
+                pass
             return False
     
     # 处理WebSocket管理器发送的消息

@@ -128,6 +128,31 @@ class ESP32DataHandler:
         Returns:
             dict: 批量处理结果
         """
+        # 添加空值检查
+        if data_list is None:
+            logger.error(f"ESP32设备 {device_code} 批量数据为空")
+            return {
+                'success': False,
+                'error': '批量数据为空'
+            }
+        
+        if not isinstance(data_list, list):
+            logger.error(f"ESP32设备 {device_code} 批量数据不是数组格式: {type(data_list)}")
+            return {
+                'success': False,
+                'error': f'批量数据必须是数组格式，当前类型: {type(data_list)}'
+            }
+        
+        if len(data_list) == 0:
+            logger.warning(f"ESP32设备 {device_code} 批量数据为空数组")
+            return {
+                'success': True,
+                'total_items': 0,
+                'successful_items': 0,
+                'failed_items': 0,
+                'results': []
+            }
+        
         results = []
         success_count = 0
         error_count = 0

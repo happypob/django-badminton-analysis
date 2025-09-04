@@ -213,8 +213,20 @@ class ESP32Consumer(AsyncWebsocketConsumer):
     async def handle_batch_sensor_data(self, data):
         """处理批量传感器数据"""
         sensor_type = data.get('sensor_type')
-        data_list = data.get('data_list')
+        # 修复：ESP32发送的是'data'字段，不是'data_list'
+        data_list = data.get('data') or data.get('data_list')
         session_id = data.get('session_id')
+        
+        # 添加空值检查
+        if data_list is None:
+            logger.error(f"ESP32设备 {self.device_code} 批量数据为空")
+            await self.send_error("批量数据字段为空")
+            return
+        
+        if not isinstance(data_list, list):
+            logger.error(f"ESP32设备 {self.device_code} 批量数据不是数组格式: {type(data_list)}")
+            await self.send_error("批量数据必须是数组格式")
+            return
         
         # 使用ESP32处理器处理批量数据
         result = await database_sync_to_async(esp32_handler.process_batch_data)(

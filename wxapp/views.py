@@ -420,22 +420,57 @@ def end_collection_session(request):
                     'error': f'会话不在活动状态。当前状态: {session.status}'
                 }, status=400)
             
-            # 更新会话状态为stopping，等待ESP32轮询获取停止指令
+            # 更新会话状态为stopping，主动发送WebSocket停止指令
             session.status = 'stopping'
             session.end_time = timezone.now()
             session.save()
             
-            # 记录等待ESP32轮询的指令
-            print(f"📱 结束采集会话 {session_id}，等待ESP32轮询停止指令")
+            # 主动通过WebSocket发送停止指令给ESP32
+            print(f"📱 结束采集会话 {session_id}，主动发送WebSocket停止指令给ESP32")
+            
+            # 构建WebSocket停止指令消息
+            websocket_message = {
+                'type': 'stop_collection',
+                'session_id': session.id,
+                'device_code': device_code,
+                'command': 'STOP_COLLECTION',
+                'timestamp': datetime.now().isoformat(),
+                'message': '停止采集指令'
+            }
+            
+            # 通过WebSocket管理器发送停止指令
+            from .websocket_manager import websocket_manager
+            import asyncio
+            
+            async def send_stop_command():
+                return await websocket_manager.send_to_device(
+                    device_code, 
+                    'stop_collection', 
+                    {
+                        'session_id': session.id,
+                        'command': 'STOP_COLLECTION',
+                        'timestamp': datetime.now().isoformat(),
+                        'message': '停止采集指令'
+                    }
+                )
+            
+            # 执行WebSocket发送
+            try:
+                websocket_success = asyncio.run(send_stop_command())
+                print(f"📡 WebSocket停止指令发送{'成功' if websocket_success else '失败'}")
+            except Exception as e:
+                print(f"📡 WebSocket停止指令发送异常: {e}")
+                websocket_success = False
             
             return JsonResponse({
-                'msg': '采集结束，等待ESP32轮询获取停止指令',
+                'msg': '采集结束，已主动发送停止指令给ESP32',
                 'session_id': session.id,
                 'status': 'stopping',
                 'device_code': device_code,
-                'polling_url': f'/wxapp/esp32/poll_commands/',
+                'websocket_sent': websocket_success,
+                'websocket_message': websocket_message,
                 'timestamp': session.end_time.isoformat(),
-                'note': 'ESP32需要轮询 /wxapp/esp32/poll_commands/ 获取停止指令，上传数据后调用mark_upload_complete'
+                'note': 'ESP32应该立即收到停止采集指令，完成数据上传后调用mark_upload_complete'
             })
             
         except DataCollectionSession.DoesNotExist:
@@ -445,7 +480,7 @@ def end_collection_session(request):
     
     elif request.method == 'GET':
         return JsonResponse({
-            'msg': '结束采集API - 等待ESP32轮询获取停止指令并开始数据分析',
+            'msg': '结束采集API - 主动发送WebSocket停止指令给ESP32并开始数据分析',
             'method': 'POST',
             'required_params': {
                 'session_id': 'int - 会话ID'
@@ -453,7 +488,7 @@ def end_collection_session(request):
             'optional_params': {
                 'device_code': 'string - 设备码 (默认: 2025001)'
             },
-            'description': '小程序点击结束采集时等待ESP32轮询获取停止指令并开始数据分析',
+            'description': '小程序点击结束采集时主动通过WebSocket发送停止指令给ESP32，ESP32完成数据上传后调用mark_upload_complete开始分析',
             'example': {
                 'session_id': '1015',
                 'device_code': '2025001'

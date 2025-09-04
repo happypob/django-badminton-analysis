@@ -1484,25 +1484,54 @@ def save_analysis_plot(data, filename, title, ylabel):
 # 生成多传感器曲线图片，只在分析数据更新时调用
 
 def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor_curve.jpg"):
-    sensor_names = {
-        "waist": "腰部",
-        "wrist": "手腕",
-        "ankle": "脚踝"
-    }
-    plt.figure(figsize=(10, 5))
-    for sensor, data in sensor_data.items():
-        plt.plot(time, data, label=sensor_names.get(sensor, sensor))
-    plt.title("多传感器角速度随时间变化曲线")
-    plt.xlabel("时间")
-    plt.ylabel("角速度")
-    plt.legend()
-    plt.tight_layout()
-    images_dir = os.path.join(settings.BASE_DIR, 'images')
-    os.makedirs(images_dir, exist_ok=True)
-    filepath = os.path.join(images_dir, filename)
-    plt.savefig(filepath)
-    plt.close()
-    return filepath
+    """生成多传感器角速度曲线图片"""
+    try:
+        sensor_names = {
+            "waist": "腰部",
+            "wrist": "手腕", 
+            "shoulder": "肩部",
+            "racket": "球拍",
+            "ankle": "脚踝"
+        }
+        
+        plt.figure(figsize=(12, 6))
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'SimHei', 'Arial Unicode MS']
+        plt.rcParams['axes.unicode_minus'] = False
+        
+        for sensor, data in sensor_data.items():
+            if data and len(data) > 0:
+                plt.plot(time[:len(data)], data, label=sensor_names.get(sensor, sensor), linewidth=2)
+        
+        plt.title("多传感器角速度随时间变化曲线", fontsize=14)
+        plt.xlabel("时间 (ms)", fontsize=12)
+        plt.ylabel("角速度 (rad/s)", fontsize=12)
+        plt.legend(fontsize=10)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        # 使用MEDIA_ROOT确保路径一致性
+        images_dir = settings.MEDIA_ROOT
+        os.makedirs(images_dir, exist_ok=True)
+        filepath = os.path.join(images_dir, filename)
+        
+        # 保存图片
+        plt.savefig(filepath, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        # 添加调试信息
+        print(f"✅ 图片生成成功:")
+        print(f"   文件路径: {filepath}")
+        print(f"   文件大小: {os.path.getsize(filepath) if os.path.exists(filepath) else 0} bytes")
+        print(f"   MEDIA_ROOT: {settings.MEDIA_ROOT}")
+        print(f"   MEDIA_URL: {settings.MEDIA_URL}")
+        
+        return filepath
+        
+    except Exception as e:
+        print(f"❌ 图片生成失败: {str(e)}")
+        import traceback
+        print(f"详细错误: {traceback.format_exc()}")
+        return None
 
 # 只返回图片URL，不再每次请求都生成图片
 
@@ -1523,27 +1552,47 @@ def latest_analysis_images(request):
         
         # 多传感器曲线图
         multi_sensor_filename = "latest_multi_sensor_curve.jpg"
-        multi_sensor_path = os.path.join(settings.MEDIA_ROOT, 'images', multi_sensor_filename)
+        # 修复路径查找逻辑 - 直接使用MEDIA_ROOT
+        multi_sensor_path = os.path.join(settings.MEDIA_ROOT, multi_sensor_filename)
+        
+        # 调试信息
+        print(f"🔍 图片查找调试信息:")
+        print(f"   查找路径: {multi_sensor_path}")
+        print(f"   文件是否存在: {os.path.exists(multi_sensor_path)}")
+        print(f"   MEDIA_ROOT: {settings.MEDIA_ROOT}")
+        print(f"   MEDIA_URL: {settings.MEDIA_URL}")
+        
+        # 列出MEDIA_ROOT目录下的所有文件
+        if os.path.exists(settings.MEDIA_ROOT):
+            files_in_media = os.listdir(settings.MEDIA_ROOT)
+            print(f"   MEDIA_ROOT中的文件: {files_in_media}")
+        else:
+            print(f"   MEDIA_ROOT目录不存在")
         
         if os.path.exists(multi_sensor_path):
+            file_size = os.path.getsize(multi_sensor_path)
             images.append({
-                "image_url": request.build_absolute_uri(f"/images/{multi_sensor_filename}"),
+                "image_url": request.build_absolute_uri(f"{settings.MEDIA_URL}{multi_sensor_filename}"),
                 "title": "多传感器角速度随时间变化曲线",
                 "description": "同一张图展示各个传感器的角速度变化，便于观察发力时延",
                 "analysis_id": latest_analysis.id,
                 "session_id": latest_analysis.session_id,
-                "created_at": latest_analysis.analysis_time.isoformat()
+                "created_at": latest_analysis.analysis_time.isoformat(),
+                "file_path": multi_sensor_path,
+                "file_size": file_size
             })
+            print(f"✅ 找到图片文件，大小: {file_size} bytes")
         
         # 如果没有找到任何图片，返回默认图片信息
         if not images:
             images.append({
-                "image_url": request.build_absolute_uri("/images/default_analysis.jpg"),
+                "image_url": request.build_absolute_uri(f"{settings.MEDIA_URL}default_analysis.jpg"),
                 "title": "默认分析图片",
                 "description": "暂无分析图片，显示默认图片",
                 "analysis_id": latest_analysis.id,
                 "session_id": latest_analysis.session_id,
-                "created_at": latest_analysis.analysis_time.isoformat()
+                "created_at": latest_analysis.analysis_time.isoformat(),
+                "note": "图片文件未找到，请检查图片生成过程"
             })
         
         return JsonResponse({
@@ -1553,13 +1602,23 @@ def latest_analysis_images(request):
                 'session_id': latest_analysis.session_id,
                 'created_at': latest_analysis.analysis_time.isoformat(),
                 'status': 'completed'
+            },
+            'debug_info': {
+                'media_root': settings.MEDIA_ROOT,
+                'media_url': settings.MEDIA_URL,
+                'image_path': multi_sensor_path,
+                'file_exists': os.path.exists(multi_sensor_path)
             }
         }, safe=False)
         
     except Exception as e:
         return JsonResponse({
             'error': f'Failed to get latest analysis images: {str(e)}',
-            'message': '获取最新分析图片失败'
+            'message': '获取最新分析图片失败',
+            'debug_info': {
+                'media_root': getattr(settings, 'MEDIA_ROOT', 'Not set'),
+                'media_url': getattr(settings, 'MEDIA_URL', 'Not set')
+            }
         }, status=500)
 
 # 示例：你可以在分析数据更新时调用如下代码生成图片
@@ -2745,3 +2804,441 @@ async def perform_analysis(session_id):
         )
         
         return False
+
+@csrf_exempt
+def debug_images(request):
+    """图片调试API - 查看图片生成和访问状态"""
+    if request.method == 'GET':
+        try:
+            debug_info = {
+                'timestamp': datetime.now().isoformat(),
+                'settings': {
+                    'BASE_DIR': str(settings.BASE_DIR),
+                    'MEDIA_ROOT': getattr(settings, 'MEDIA_ROOT', 'Not configured'),
+                    'MEDIA_URL': getattr(settings, 'MEDIA_URL', 'Not configured'),
+                    'STATIC_ROOT': getattr(settings, 'STATIC_ROOT', 'Not configured'),
+                    'STATIC_URL': getattr(settings, 'STATIC_URL', 'Not configured'),
+                },
+                'directories': {},
+                'images': {},
+                'permissions': {}
+            }
+            
+            # 检查各个目录状态
+            directories_to_check = [
+                ('BASE_DIR', settings.BASE_DIR),
+                ('MEDIA_ROOT', getattr(settings, 'MEDIA_ROOT', None)),
+                ('BASE_DIR/images', os.path.join(settings.BASE_DIR, 'images')),
+            ]
+            
+            for dir_name, dir_path in directories_to_check:
+                if dir_path:
+                    debug_info['directories'][dir_name] = {
+                        'path': str(dir_path),
+                        'exists': os.path.exists(dir_path),
+                        'is_dir': os.path.isdir(dir_path) if os.path.exists(dir_path) else False,
+                        'writable': os.access(dir_path, os.W_OK) if os.path.exists(dir_path) else False,
+                        'files': []
+                    }
+                    
+                    # 列出目录中的文件
+                    if os.path.exists(dir_path) and os.path.isdir(dir_path):
+                        try:
+                            files = os.listdir(dir_path)
+                            image_files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif'))]
+                            debug_info['directories'][dir_name]['files'] = image_files
+                            debug_info['directories'][dir_name]['total_files'] = len(files)
+                            debug_info['directories'][dir_name]['image_files'] = len(image_files)
+                        except Exception as e:
+                            debug_info['directories'][dir_name]['error'] = str(e)
+            
+            # 检查特定图片文件
+            image_files_to_check = [
+                'latest_multi_sensor_curve.jpg',
+                'default_analysis.jpg'
+            ]
+            
+            for filename in image_files_to_check:
+                # 在MEDIA_ROOT中查找
+                if hasattr(settings, 'MEDIA_ROOT'):
+                    file_path = os.path.join(settings.MEDIA_ROOT, filename)
+                    debug_info['images'][filename] = {
+                        'media_root_path': file_path,
+                        'exists_in_media': os.path.exists(file_path),
+                        'size_bytes': os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+                        'url': f"{getattr(settings, 'MEDIA_URL', '/media/')}{filename}"
+                    }
+                
+                # 在BASE_DIR/images中查找
+                base_images_path = os.path.join(settings.BASE_DIR, 'images', filename)
+                debug_info['images'][filename]['base_images_path'] = base_images_path
+                debug_info['images'][filename]['exists_in_base_images'] = os.path.exists(base_images_path)
+            
+            # 检查最新的分析结果
+            latest_analysis = AnalysisResult.objects.order_by('-analysis_time').first()
+            if latest_analysis:
+                debug_info['latest_analysis'] = {
+                    'id': latest_analysis.id,
+                    'session_id': latest_analysis.session_id,
+                    'created_at': latest_analysis.analysis_time.isoformat()
+                }
+            else:
+                debug_info['latest_analysis'] = None
+            
+            # 生成测试图片
+            test_image_path = None
+            try:
+                test_image_path = generate_test_image()
+                debug_info['test_image'] = {
+                    'generated': True,
+                    'path': test_image_path,
+                    'exists': os.path.exists(test_image_path) if test_image_path else False
+                }
+            except Exception as e:
+                debug_info['test_image'] = {
+                    'generated': False,
+                    'error': str(e)
+                }
+            
+            return JsonResponse(debug_info, json_dumps_params={'indent': 2})
+            
+        except Exception as e:
+            return JsonResponse({
+                'error': f'调试信息获取失败: {str(e)}',
+                'timestamp': datetime.now().isoformat()
+            }, status=500)
+    
+    elif request.method == 'POST':
+        # 强制重新生成图片
+        action = request.POST.get('action', 'regenerate')
+        
+        if action == 'regenerate':
+            try:
+                # 生成测试图片
+                test_path = generate_test_image()
+                
+                return JsonResponse({
+                    'msg': '测试图片生成成功',
+                    'test_image_path': test_path,
+                    'test_image_exists': os.path.exists(test_path) if test_path else False,
+                    'timestamp': datetime.now().isoformat()
+                })
+            except Exception as e:
+                return JsonResponse({
+                    'error': f'图片生成失败: {str(e)}',
+                    'timestamp': datetime.now().isoformat()
+                }, status=500)
+        
+        elif action == 'cleanup':
+            try:
+                # 清理旧图片
+                cleanup_count = 0
+                for dir_path in [settings.MEDIA_ROOT, os.path.join(settings.BASE_DIR, 'images')]:
+                    if os.path.exists(dir_path):
+                        for file in os.listdir(dir_path):
+                            if file.endswith('.jpg') or file.endswith('.png'):
+                                file_path = os.path.join(dir_path, file)
+                                os.remove(file_path)
+                                cleanup_count += 1
+                
+                return JsonResponse({
+                    'msg': '图片清理完成',
+                    'cleaned_files': cleanup_count,
+                    'timestamp': datetime.now().isoformat()
+                })
+            except Exception as e:
+                return JsonResponse({
+                    'error': f'图片清理失败: {str(e)}',
+                    'timestamp': datetime.now().isoformat()
+                }, status=500)
+    
+    else:
+        return JsonResponse({'error': 'GET or POST method required'}, status=405)
+
+def generate_test_image():
+    """生成测试图片"""
+    try:
+        # 生成测试数据
+        time_points = list(range(0, 1000, 10))
+        test_sensor_data = {
+            'waist': [abs(math.sin(t/100) * 2 + math.sin(t/50) * 1.5) for t in time_points],
+            'shoulder': [abs(math.sin((t-50)/100) * 2.5 + math.sin((t-50)/50) * 1.8) for t in time_points],
+            'wrist': [abs(math.sin((t-100)/100) * 3 + math.sin((t-100)/50) * 2) for t in time_points],
+            'racket': [abs(math.sin((t-150)/100) * 3.5 + math.sin((t-150)/50) * 2.5) for t in time_points]
+        }
+        
+        # 生成图片
+        return generate_multi_sensor_curve(test_sensor_data, time_points, "test_analysis_curve.jpg")
+        
+    except Exception as e:
+        print(f"测试图片生成失败: {str(e)}")
+        raise e
+
+@csrf_exempt
+def list_images(request):
+    """列出所有可用的图片"""
+    if request.method == 'GET':
+        try:
+            images_info = {
+                'timestamp': datetime.now().isoformat(),
+                'media_images': [],
+                'base_images': [],
+                'urls': {}
+            }
+            
+            # 扫描MEDIA_ROOT
+            if hasattr(settings, 'MEDIA_ROOT') and os.path.exists(settings.MEDIA_ROOT):
+                for file in os.listdir(settings.MEDIA_ROOT):
+                    if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
+                        file_path = os.path.join(settings.MEDIA_ROOT, file)
+                        images_info['media_images'].append({
+                            'filename': file,
+                            'path': file_path,
+                            'size': os.path.getsize(file_path),
+                            'url': request.build_absolute_uri(f"{settings.MEDIA_URL}{file}"),
+                            'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+                        })
+            
+            # 扫描BASE_DIR/images
+            base_images_dir = os.path.join(settings.BASE_DIR, 'images')
+            if os.path.exists(base_images_dir):
+                for file in os.listdir(base_images_dir):
+                    if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
+                        file_path = os.path.join(base_images_dir, file)
+                        images_info['base_images'].append({
+                            'filename': file,
+                            'path': file_path,
+                            'size': os.path.getsize(file_path),
+                            'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+                        })
+            
+            # 添加访问URL示例
+            images_info['urls'] = {
+                'media_url_pattern': f"{request.build_absolute_uri(settings.MEDIA_URL)}{{filename}}",
+                'example': f"{request.build_absolute_uri(settings.MEDIA_URL)}latest_multi_sensor_curve.jpg"
+            }
+            
+            return JsonResponse(images_info, json_dumps_params={'indent': 2})
+            
+        except Exception as e:
+            return JsonResponse({
+                'error': f'图片列表获取失败: {str(e)}',
+                'timestamp': datetime.now().isoformat()
+            }, status=500)
+    
+    else:
+        return JsonResponse({'error': 'GET method required'}, status=405)
+
+@csrf_exempt
+def miniprogram_get_images(request):
+    """小程序专用图片获取API - 返回最新分析图片"""
+    if request.method == 'GET':
+        try:
+            # 获取查询参数
+            session_id = request.GET.get('session_id')
+            
+            # 如果指定了session_id，获取特定会话的分析结果
+            if session_id:
+                try:
+                    session = DataCollectionSession.objects.get(id=session_id)
+                    analysis_result = AnalysisResult.objects.get(session=session)
+                except (DataCollectionSession.DoesNotExist, AnalysisResult.DoesNotExist):
+                    return JsonResponse({
+                        'error': '指定会话的分析结果不存在',
+                        'session_id': session_id
+                    }, status=404)
+            else:
+                # 获取最新的分析结果
+                analysis_result = AnalysisResult.objects.order_by('-analysis_time').first()
+                if not analysis_result:
+                    return JsonResponse({
+                        'error': '暂无分析结果',
+                        'message': '请先完成数据采集和分析'
+                    }, status=404)
+                session = analysis_result.session
+            
+            # 查找图片文件
+            image_files = [
+                'latest_multi_sensor_curve.jpg',
+                f'session_{session.id}_analysis.jpg',
+                'test_analysis_curve.jpg'
+            ]
+            
+            found_images = []
+            
+            for filename in image_files:
+                file_path = os.path.join(settings.MEDIA_ROOT, filename)
+                if os.path.exists(file_path):
+                    file_size = os.path.getsize(file_path)
+                    file_mtime = os.path.getmtime(file_path)
+                    
+                    found_images.append({
+                        'filename': filename,
+                        'url': request.build_absolute_uri(f'{settings.MEDIA_URL}{filename}'),
+                        'size': file_size,
+                        'modified_time': datetime.fromtimestamp(file_mtime).isoformat(),
+                        'title': get_image_title(filename),
+                        'description': get_image_description(filename)
+                    })
+            
+            # 如果没有找到图片，尝试生成一个
+            if not found_images:
+                try:
+                    # 自动生成图片
+                    angle_data = extract_angular_velocity_data(session)
+                    time_labels = angle_data['time_labels']
+                    sensor_data = {
+                        'waist': angle_data['waist_data'],
+                        'shoulder': angle_data['shoulder_data'],
+                        'wrist': angle_data['wrist_data'],
+                        'racket': angle_data['racket_data']
+                    }
+                    
+                    # 只保留有数据的传感器
+                    sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
+                    
+                    if sensor_data and time_labels:
+                        generated_filename = f'session_{session.id}_auto_generated.jpg'
+                        generated_path = generate_multi_sensor_curve(sensor_data, time_labels, generated_filename)
+                        
+                        if generated_path and os.path.exists(generated_path):
+                            file_size = os.path.getsize(generated_path)
+                            found_images.append({
+                                'filename': generated_filename,
+                                'url': request.build_absolute_uri(f'{settings.MEDIA_URL}{generated_filename}'),
+                                'size': file_size,
+                                'modified_time': datetime.now().isoformat(),
+                                'title': '自动生成的分析图片',
+                                'description': f'会话 {session.id} 的多传感器角速度分析图',
+                                'auto_generated': True
+                            })
+                
+                except Exception as e:
+                    print(f"自动生成图片失败: {str(e)}")
+            
+            # 返回结果
+            return JsonResponse({
+                'success': True,
+                'session_info': {
+                    'session_id': session.id,
+                    'status': session.status,
+                    'start_time': session.start_time.isoformat(),
+                    'end_time': session.end_time.isoformat() if session.end_time else None
+                },
+                'analysis_info': {
+                    'analysis_id': analysis_result.id,
+                    'analysis_time': analysis_result.analysis_time.isoformat()
+                },
+                'images': found_images,
+                'total_images': len(found_images),
+                'server_info': {
+                    'media_url_base': request.build_absolute_uri(settings.MEDIA_URL),
+                    'debug_url': request.build_absolute_uri('/api/debug_images/'),
+                    'timestamp': datetime.now().isoformat()
+                }
+            })
+            
+        except Exception as e:
+            return JsonResponse({
+                'error': f'获取图片失败: {str(e)}',
+                'timestamp': datetime.now().isoformat()
+            }, status=500)
+    
+    else:
+        return JsonResponse({'error': 'GET method required'}, status=405)
+
+def get_image_title(filename):
+    """根据文件名获取图片标题"""
+    title_map = {
+        'latest_multi_sensor_curve.jpg': '最新多传感器分析图',
+        'test_analysis_curve.jpg': '测试分析图',
+    }
+    
+    if filename.startswith('session_') and filename.endswith('_analysis.jpg'):
+        session_id = filename.split('_')[1]
+        return f'会话 {session_id} 分析图'
+    elif filename.startswith('session_') and filename.endswith('_auto_generated.jpg'):
+        session_id = filename.split('_')[1]
+        return f'会话 {session_id} 自动生成图'
+    
+    return title_map.get(filename, filename)
+
+def get_image_description(filename):
+    """根据文件名获取图片描述"""
+    desc_map = {
+        'latest_multi_sensor_curve.jpg': '最新的多传感器角速度随时间变化曲线',
+        'test_analysis_curve.jpg': '用于测试的多传感器分析曲线',
+    }
+    
+    if filename.startswith('session_'):
+        return '羽毛球运动多传感器数据分析图，显示各部位传感器的角速度变化'
+    
+    return desc_map.get(filename, '羽毛球分析图片')
+
+@csrf_exempt 
+def force_generate_image(request):
+    """强制为指定会话生成分析图片"""
+    if request.method == 'POST':
+        session_id = request.POST.get('session_id')
+        
+        if not session_id:
+            return JsonResponse({'error': 'session_id required'}, status=400)
+        
+        try:
+            session = DataCollectionSession.objects.get(id=session_id)
+            
+            # 生成图片
+            angle_data = extract_angular_velocity_data(session)
+            time_labels = angle_data['time_labels']
+            sensor_data = {
+                'waist': angle_data['waist_data'],
+                'shoulder': angle_data['shoulder_data'], 
+                'wrist': angle_data['wrist_data'],
+                'racket': angle_data['racket_data']
+            }
+            
+            # 只保留有数据的传感器
+            sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
+            
+            if not sensor_data or not time_labels:
+                return JsonResponse({
+                    'error': '该会话没有有效的传感器数据',
+                    'session_id': session_id
+                }, status=400)
+            
+            # 生成图片
+            filename = f'session_{session_id}_forced.jpg'
+            generated_path = generate_multi_sensor_curve(sensor_data, time_labels, filename)
+            
+            if generated_path and os.path.exists(generated_path):
+                file_size = os.path.getsize(generated_path)
+                return JsonResponse({
+                    'success': True,
+                    'message': '图片生成成功',
+                    'session_id': session_id,
+                    'image': {
+                        'filename': filename,
+                        'url': request.build_absolute_uri(f'{settings.MEDIA_URL}{filename}'),
+                        'size': file_size,
+                        'path': generated_path
+                    }
+                })
+            else:
+                return JsonResponse({
+                    'error': '图片生成失败',
+                    'session_id': session_id
+                }, status=500)
+                
+        except DataCollectionSession.DoesNotExist:
+            return JsonResponse({
+                'error': '会话不存在',
+                'session_id': session_id
+            }, status=404)
+        except Exception as e:
+            return JsonResponse({
+                'error': f'图片生成失败: {str(e)}',
+                'session_id': session_id
+            }, status=500)
+    
+    else:
+        return JsonResponse({'error': 'POST method required'}, status=405)

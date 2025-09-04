@@ -20,6 +20,8 @@ def home_view(request):
         <ul>
             <li><a href="/admin/">管理后台</a></li>
             <li><a href="/api/">API接口</a></li>
+            <li><a href="/api/debug_images/">图片调试</a></li>
+            <li><a href="/api/list_images/">图片列表</a></li>
         </ul>
     </body>
     </html>
@@ -37,7 +39,23 @@ urlpatterns = [
     path('websocket-test/', websocket_test_view, name='websocket_test'),  # WebSocket测试页面
 ]
 
-# 开发环境静态文件处理
+# 静态文件和媒体文件处理 - 适用于Daphne部署
+# 在生产环境中也需要处理MEDIA文件，因为你使用的是Daphne而不是Nginx
 if settings.DEBUG:
+    # 开发环境
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+else:
+    # 生产环境 - Daphne需要这些配置来处理静态文件
+    from django.views.static import serve
+    from django.urls import re_path
+    
+    # 添加MEDIA文件处理
+    urlpatterns += [
+        re_path(r'^images/(?P<path>.*)$', serve, {
+            'document_root': settings.MEDIA_ROOT,
+        }),
+        re_path(r'^static/(?P<path>.*)$', serve, {
+            'document_root': settings.STATIC_ROOT,
+        }),
+    ]

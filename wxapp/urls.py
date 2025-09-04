@@ -18,6 +18,12 @@ urlpatterns = [
     path('upload_mat/', views.upload_mat_file),
     path('get_mat_analysis/', views.get_mat_analysis_result),
     path('latest_analysis_images/', views.latest_analysis_images),  # 新增图片获取接口
+    # 图片调试和管理API
+    path('debug_images/', views.debug_images, name='debug_images'),
+    path('list_images/', views.list_images, name='list_images'),
+    # 小程序专用图片API
+    path('miniprogram/get_images/', views.miniprogram_get_images, name='miniprogram_get_images'),
+    path('force_generate_image/', views.force_generate_image, name='force_generate_image'),
     # 新增小程序数据发送接口
     path('send_data1/', views.send_data1),
     path('send_data2/', views.send_data2),

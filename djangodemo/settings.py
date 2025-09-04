@@ -133,10 +133,18 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# Media files (用户上传的文件，包括生成的图片)
+MEDIA_URL = '/images/'
+MEDIA_ROOT = BASE_DIR / 'images'
+
+# 确保在生产环境中也能处理静态文件 (适用于Daphne部署)
+# 如果使用Daphne而不是Nginx，需要Django来处理静态文件
+if not DEBUG:
+    # 生产环境确保目录存在
+    os.makedirs(MEDIA_ROOT, exist_ok=True)
+    os.makedirs(STATIC_ROOT, exist_ok=True)
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-MEDIA_URL = '/images/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'images')

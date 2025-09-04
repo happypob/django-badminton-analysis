@@ -1003,6 +1003,26 @@ def analyze_session_data(session):
             rom_data=analysis_result['rom_data']
         )
         
+        # 自动生成分析图片
+        try:
+            angle_data = extract_angular_velocity_data(session)
+            time_labels = angle_data['time_labels']
+            sensor_data_for_plot = {
+                'waist': angle_data['waist_data'],
+                'shoulder': angle_data['shoulder_data'],
+                'wrist': angle_data['wrist_data'],
+                'racket': angle_data['racket_data']
+            }
+            # 只保留有数据的传感器
+            sensor_data_for_plot = {k: v for k, v in sensor_data_for_plot.items() if v and any(val != 0 for val in v)}
+            if sensor_data_for_plot and time_labels:
+                generate_multi_sensor_curve(sensor_data_for_plot, time_labels)
+                print(f"✅ 会话 {session.id} 分析图片生成成功")
+            else:
+                print(f"⚠️ 会话 {session.id} 无有效数据生成图片")
+        except Exception as img_error:
+            print(f"⚠️ 会话 {session.id} 图片生成失败: {str(img_error)}")
+        
         # 更新会话状态
         session.status = 'completed'
         session.save()

@@ -241,17 +241,52 @@ def start_collection_session(request):
                 status='calibrating'
             )
             
-            # 记录等待ESP32轮询的指令
-            print(f"📱 创建采集会话 {session.id}，等待ESP32轮询开始指令")
+            # 主动通过WebSocket发送开始指令给ESP32
+            print(f"📱 创建采集会话 {session.id}，主动发送WebSocket开始指令给ESP32")
+            
+            # 构建WebSocket指令消息
+            websocket_message = {
+                'type': 'start_collection',
+                'session_id': session.id,
+                'device_code': device_code,
+                'command': 'START_COLLECTION',
+                'timestamp': datetime.now().isoformat(),
+                'message': '开始采集指令'
+            }
+            
+            # 通过WebSocket管理器发送指令
+            from .websocket_manager import websocket_manager
+            import asyncio
+            
+            async def send_start_command():
+                return await websocket_manager.send_to_device(
+                    device_code, 
+                    'start_collection', 
+                    {
+                        'session_id': session.id,
+                        'command': 'START_COLLECTION',
+                        'timestamp': datetime.now().isoformat(),
+                        'message': '开始采集指令'
+                    }
+                )
+            
+            # 执行WebSocket发送
+            try:
+                websocket_success = asyncio.run(send_start_command())
+                print(f"📡 WebSocket指令发送{'成功' if websocket_success else '失败'}")
+            except Exception as e:
+                print(f"📡 WebSocket指令发送异常: {e}")
+                websocket_success = False
             
             return JsonResponse({
-                'msg': '采集会话创建成功，等待ESP32轮询获取开始指令',
+                'msg': '采集会话创建成功，已主动发送开始指令给ESP32',
                 'session_id': session.id,
                 'status': 'calibrating',
                 'device_code': device_code,
-                'polling_url': f'/wxapp/esp32/poll_commands/',
+                'websocket_sent': websocket_success,
+                'websocket_message': websocket_message,
                 'timestamp': session.start_time.isoformat(),
-                'note': 'ESP32需要定期轮询 /wxapp/esp32/poll_commands/ 获取指令'
+                'note': 'ESP32应该立即收到开始采集指令'
             })
             
         except Exception as e:

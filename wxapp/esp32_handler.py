@@ -173,6 +173,15 @@ class ESP32DataHandler:
                     'error': 'Session not found'
                 }
         
+        # 定义传感器ID映射
+        SENSOR_ID_MAPPING = {
+            1: 'waist',      # 腰部传感器
+            2: 'shoulder',   # 肩部传感器  
+            3: 'wrist',      # 手腕传感器 (更新：根据实际数据)
+            4: 'wrist',      # 手腕传感器 (备用)
+            5: 'racket',     # 球拍传感器 (预留)
+        }
+        
         # 批量处理数据
         for i, data_item in enumerate(data_list):
             try:
@@ -187,11 +196,20 @@ class ESP32DataHandler:
                     error_count += 1
                     continue
                 
+                # 根据数据中的sensor_id确定真实的传感器类型
+                actual_sensor_id = data_item.get('sensor_id')
+                if actual_sensor_id is not None:
+                    actual_sensor_type = SENSOR_ID_MAPPING.get(actual_sensor_id, 'unknown')
+                    print(f"🔧 数据项{i}: sensor_id={actual_sensor_id} → sensor_type={actual_sensor_type} (原始type={sensor_type})")
+                else:
+                    actual_sensor_type = sensor_type  # 回退到原始类型
+                    print(f"⚠️ 数据项{i}: 无sensor_id，使用原始类型={sensor_type}")
+                
                 # 存储数据
                 sensor_data_obj = SensorData.objects.create(
                     session=session,
                     device_code=device_code,
-                    sensor_type=sensor_type,
+                    sensor_type=actual_sensor_type,  # 使用实际传感器类型
                     data=json.dumps(data_item)
                 )
                 

@@ -98,12 +98,27 @@ class AnalysisResult(models.Model):
     rom_data = models.JSONField(verbose_name='关节活动度数据')  # 关节活动度
     analysis_time = models.DateTimeField(auto_now_add=True, verbose_name='分析时间')
     
+    # 图片相关字段
+    analysis_image = models.CharField(max_length=255, null=True, blank=True, verbose_name='分析图片路径')
+    image_generated_time = models.DateTimeField(null=True, blank=True, verbose_name='图片生成时间')
+    
     class Meta:
         verbose_name = '分析结果'
         verbose_name_plural = '分析结果'
     
     def __str__(self):
         return f"分析结果 {self.session.id}"
+    
+    def get_image_url(self):
+        """获取图片完整URL"""
+        if self.analysis_image:
+            from django.conf import settings
+            return f"{settings.MEDIA_URL}{self.analysis_image}"
+        return None
+    
+    def has_image(self):
+        """检查是否有图片"""
+        return bool(self.analysis_image)
 
 class MiniProgramData(models.Model):
     """小程序数据模型"""

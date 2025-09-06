@@ -39,7 +39,7 @@ class DeviceGroupAdmin(admin.ModelAdmin):
 
 @admin.register(DataCollectionSession)
 class DataCollectionSessionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'device_group', 'start_time', 'end_time', 'status')
+    list_display = ('id', 'user', 'device_group', 'start_time', 'end_time', 'status', 'analysis_status', 'view_analysis_image')
     list_filter = ('status', 'start_time', 'device_group')
     search_fields = ('user__openid', 'device_group__group_code')
     readonly_fields = ('start_time', 'analysis_time')
@@ -50,6 +50,34 @@ class DataCollectionSessionAdmin(admin.ModelAdmin):
         except:
             return "未分析"
     analysis_time.short_description = '分析时间'
+    
+    def analysis_status(self, obj):
+        """分析状态"""
+        try:
+            analysis_result = obj.analysisresult
+            if analysis_result.has_image():
+                return format_html('<span style="color: green;">✅ 已分析 (有图片)</span>')
+            else:
+                return format_html('<span style="color: orange;">⚠️ 已分析 (无图片)</span>')
+        except:
+            return format_html('<span style="color: red;">❌ 未分析</span>')
+    analysis_status.short_description = '分析状态'
+    
+    def view_analysis_image(self, obj):
+        """查看分析图片"""
+        try:
+            analysis_result = obj.analysisresult
+            if analysis_result.has_image():
+                image_url = analysis_result.get_image_url()
+                return format_html(
+                    '<a href="{}" target="_blank" style="background: #28a745; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 12px;">查看图片</a>',
+                    image_url
+                )
+            else:
+                return format_html('<span style="color: #666; font-size: 12px;">无图片</span>')
+        except:
+            return format_html('<span style="color: #666; font-size: 12px;">未分析</span>')
+    view_analysis_image.short_description = '分析图片'
 
 @admin.register(SensorData)
 class SensorDataAdmin(admin.ModelAdmin):
@@ -63,12 +91,51 @@ class SensorDataAdmin(admin.ModelAdmin):
 
 @admin.register(AnalysisResult)
 class AnalysisResultAdmin(admin.ModelAdmin):
-    list_display = ('session', 'energy_ratio', 'analysis_time')
-    list_filter = ('analysis_time',)
-    readonly_fields = ('analysis_time',)
+    list_display = ('session', 'energy_ratio', 'analysis_time', 'has_image_display', 'view_image_link')
+    list_filter = ('analysis_time', 'image_generated_time')
+    readonly_fields = ('analysis_time', 'image_generated_time', 'image_preview')
+    fields = ('session', 'phase_delay', 'energy_ratio', 'rom_data', 'analysis_time', 'analysis_image', 'image_generated_time', 'image_preview')
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('session')
+    
+    def has_image_display(self, obj):
+        """显示是否有图片"""
+        if obj.has_image():
+            return format_html('<span style="color: green;">✅ 有图片</span>')
+        else:
+            return format_html('<span style="color: red;">❌ 无图片</span>')
+    has_image_display.short_description = '图片状态'
+    
+    def view_image_link(self, obj):
+        """查看图片链接"""
+        if obj.has_image():
+            image_url = obj.get_image_url()
+            return format_html(
+                '<a href="{}" target="_blank" style="background: #007cba; color: white; padding: 5px 10px; text-decoration: none; border-radius: 3px;">查看图片</a>',
+                image_url
+            )
+        else:
+            return format_html('<span style="color: #666;">无图片</span>')
+    view_image_link.short_description = '查看图片'
+    
+    def image_preview(self, obj):
+        """图片预览"""
+        if obj.has_image():
+            image_url = obj.get_image_url()
+            return format_html(
+                '<div style="text-align: center;">'
+                '<img src="{}" style="max-width: 600px; max-height: 400px; border: 1px solid #ddd; border-radius: 4px;">'
+                '<br><small>图片路径: {}</small>'
+                '<br><small>生成时间: {}</small>'
+                '</div>',
+                image_url,
+                obj.analysis_image,
+                obj.image_generated_time.strftime('%Y-%m-%d %H:%M:%S') if obj.image_generated_time else '未知'
+            )
+        else:
+            return format_html('<p style="color: #666; text-align: center;">暂无图片</p>')
+    image_preview.short_description = '图片预览'
 
 # 扩展admin site以添加自定义视图
 class CustomAdminSite(admin.AdminSite):

@@ -1170,17 +1170,87 @@ def extract_angular_velocity_data(session):
             wrist_gyro = [abs(math.sin((t-100)/100) * 3 + math.sin((t-100)/50) * 2) for t in time_points]
             racket_gyro = [abs(math.sin((t-150)/100) * 3.5 + math.sin((t-150)/50) * 2.5) for t in time_points]
             
-            waist_times = time_points
-            shoulder_times = time_points
-            wrist_times = time_points
-            racket_times = time_points
+            return {
+                'time_labels': time_points,
+                'waist_data': waist_gyro,
+                'shoulder_data': shoulder_gyro,
+                'wrist_data': wrist_gyro,
+                'racket_data': racket_gyro
+            }
+        
+        # 🔧 基于完整时间戳的数据对齐处理
+        print(f"🔍 传感器数据调试:")
+        print(f"腰部: 时间点={len(waist_times)}, 数据点={len(waist_gyro)}")
+        print(f"肩部: 时间点={len(shoulder_times)}, 数据点={len(shoulder_gyro)}")
+        print(f"手腕: 时间点={len(wrist_times)}, 数据点={len(wrist_gyro)}")
+        print(f"球拍: 时间点={len(racket_times)}, 数据点={len(racket_gyro)}")
+        
+        # 收集所有传感器的时间戳
+        all_timestamps = set()
+        sensor_data_map = {}
+        
+        if waist_times and waist_gyro:
+            all_timestamps.update(waist_times)
+            sensor_data_map['waist'] = dict(zip(waist_times, waist_gyro))
+            print(f"腰部时间范围: {min(waist_times)} - {max(waist_times)}")
+            
+        if shoulder_times and shoulder_gyro:
+            all_timestamps.update(shoulder_times)
+            sensor_data_map['shoulder'] = dict(zip(shoulder_times, shoulder_gyro))
+            print(f"肩部时间范围: {min(shoulder_times)} - {max(shoulder_times)}")
+            
+        if wrist_times and wrist_gyro:
+            all_timestamps.update(wrist_times)
+            sensor_data_map['wrist'] = dict(zip(wrist_times, wrist_gyro))
+            print(f"手腕时间范围: {min(wrist_times)} - {max(wrist_times)}")
+            
+        if racket_times and racket_gyro:
+            all_timestamps.update(racket_times)
+            sensor_data_map['racket'] = dict(zip(racket_times, racket_gyro))
+            print(f"球拍时间范围: {min(racket_times)} - {max(racket_times)}")
+        
+        # 创建统一的时间轴（排序后的所有时间戳）
+        unified_time_axis = sorted(list(all_timestamps))
+        print(f"📏 统一时间轴长度: {len(unified_time_axis)}")
+        print(f"时间范围: {unified_time_axis[0]} - {unified_time_axis[-1]}")
+        
+        # 为每个传感器在统一时间轴上插值/填充数据
+        def interpolate_sensor_data(sensor_name, time_axis, data_map):
+            """在统一时间轴上为传感器数据插值"""
+            result = []
+            if not data_map:
+                return [0.0] * len(time_axis)
+            
+            timestamps = sorted(data_map.keys())
+            for t in time_axis:
+                if t in data_map:
+                    # 精确匹配
+                    result.append(data_map[t])
+                else:
+                    # 简单插值：使用最近的时间戳
+                    closest_timestamp = min(timestamps, key=lambda x: abs(x - t))
+                    result.append(data_map[closest_timestamp])
+            return result
+        
+        # 为每个传感器生成对齐的数据
+        aligned_waist = interpolate_sensor_data('waist', unified_time_axis, sensor_data_map.get('waist', {}))
+        aligned_shoulder = interpolate_sensor_data('shoulder', unified_time_axis, sensor_data_map.get('shoulder', {}))
+        aligned_wrist = interpolate_sensor_data('wrist', unified_time_axis, sensor_data_map.get('wrist', {}))
+        aligned_racket = interpolate_sensor_data('racket', unified_time_axis, sensor_data_map.get('racket', {}))
+        
+        print(f"✅ 对齐后数据长度检查:")
+        print(f"时间轴: {len(unified_time_axis)}")
+        print(f"腰部: {len(aligned_waist)}")
+        print(f"肩部: {len(aligned_shoulder)}")
+        print(f"手腕: {len(aligned_wrist)}")
+        print(f"球拍: {len(aligned_racket)}")
         
         return {
-            'time_labels': waist_times,
-            'waist_data': waist_gyro,
-            'shoulder_data': shoulder_gyro,
-            'wrist_data': wrist_gyro,
-            'racket_data': racket_gyro
+            'time_labels': unified_time_axis,
+            'waist_data': aligned_waist,
+            'shoulder_data': aligned_shoulder,
+            'wrist_data': aligned_wrist,
+            'racket_data': aligned_racket
         }
         
     except Exception as e:
@@ -1498,9 +1568,24 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
         plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'SimHei', 'Arial Unicode MS']
         plt.rcParams['axes.unicode_minus'] = False
         
+        # 验证数据长度一致性
+        time_len = len(time)
+        print(f"🎨 绘图数据检查: 时间轴长度={time_len}")
+        
         for sensor, data in sensor_data.items():
             if data and len(data) > 0:
-                plt.plot(time[:len(data)], data, label=sensor_names.get(sensor, sensor), linewidth=2)
+                data_len = len(data)
+                print(f"传感器 {sensor}: 数据长度={data_len}")
+                
+                # 确保时间轴和数据长度一致
+                if data_len == time_len:
+                    plt.plot(time, data, label=sensor_names.get(sensor, sensor), linewidth=2)
+                    print(f"✅ {sensor} 数据绘制成功")
+                else:
+                    # 如果长度不一致，使用较短的长度
+                    min_len = min(time_len, data_len)
+                    plt.plot(time[:min_len], data[:min_len], label=sensor_names.get(sensor, sensor), linewidth=2)
+                    print(f"⚠️ {sensor} 数据长度不匹配，使用较短长度: {min_len}")
         
         plt.title("多传感器角速度随时间变化曲线", fontsize=14)
         plt.xlabel("时间 (ms)", fontsize=12)

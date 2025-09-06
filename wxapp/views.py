@@ -1561,7 +1561,9 @@ def process_mat_data(mat_data, wx_user):
         sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
         if sensor_data and time_labels:
             from wxapp.views import generate_multi_sensor_curve
-            generate_multi_sensor_curve(sensor_data, time_labels)
+            # 生成专用文件名并保存到数据库
+            mat_filename = f"mat_analysis_session_{session.id}_{analysis_result.id}.jpg"
+            generate_multi_sensor_curve(sensor_data, time_labels, mat_filename, analysis_result)
         
         return {
             'session_id': session.id,
@@ -1713,38 +1715,47 @@ def latest_analysis_images(request):
         # 构建图片数据
         images = []
         
-        # 多传感器曲线图
-        multi_sensor_filename = "latest_multi_sensor_curve.jpg"
-        # 修复路径查找逻辑 - 直接使用MEDIA_ROOT
-        multi_sensor_path = os.path.join(settings.MEDIA_ROOT, multi_sensor_filename)
-        
-        # 调试信息
-        print(f"🔍 图片查找调试信息:")
-        print(f"   查找路径: {multi_sensor_path}")
-        print(f"   文件是否存在: {os.path.exists(multi_sensor_path)}")
+        # 查找最新生成的图片文件（按文件修改时间排序）
+        print(f"🔍 查找最新生成的图片文件:")
         print(f"   MEDIA_ROOT: {settings.MEDIA_ROOT}")
-        print(f"   MEDIA_URL: {settings.MEDIA_URL}")
         
-        # 列出MEDIA_ROOT目录下的所有文件
         if os.path.exists(settings.MEDIA_ROOT):
-            files_in_media = os.listdir(settings.MEDIA_ROOT)
-            print(f"   MEDIA_ROOT中的文件: {files_in_media}")
+            # 获取所有图片文件
+            all_files = []
+            for file in os.listdir(settings.MEDIA_ROOT):
+                if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    file_path = os.path.join(settings.MEDIA_ROOT, file)
+                    file_mtime = os.path.getmtime(file_path)
+                    all_files.append((file, file_path, file_mtime))
+            
+            # 按修改时间倒序排序，获取最新的图片
+            if all_files:
+                all_files.sort(key=lambda x: x[2], reverse=True)
+                latest_file, latest_path, latest_mtime = all_files[0]
+                
+                file_size = os.path.getsize(latest_path)
+                images.append({
+                    "image_url": request.build_absolute_uri(f"{settings.MEDIA_URL}{latest_file}"),
+                    "title": "多传感器角速度随时间变化曲线",
+                    "description": "最新生成的多传感器角速度分析图",
+                    "analysis_id": latest_analysis.id,
+                    "session_id": latest_analysis.session_id,
+                    "created_at": latest_analysis.analysis_time.isoformat(),
+                    "file_path": latest_path,
+                    "file_size": file_size,
+                    "file_modified_time": datetime.fromtimestamp(latest_mtime).isoformat(),
+                    "is_latest_generated": True
+                })
+                print(f"✅ 找到最新生成的图片: {latest_file}, 修改时间: {datetime.fromtimestamp(latest_mtime)}, 大小: {file_size} bytes")
+                
+                # 显示所有图片文件供调试
+                print(f"   所有图片文件 (按时间倒序):")
+                for i, (fname, fpath, ftime) in enumerate(all_files[:5]):  # 只显示前5个
+                    print(f"     {i+1}. {fname} - {datetime.fromtimestamp(ftime)}")
+            else:
+                print(f"   MEDIA_ROOT中没有找到图片文件")
         else:
             print(f"   MEDIA_ROOT目录不存在")
-        
-        if os.path.exists(multi_sensor_path):
-            file_size = os.path.getsize(multi_sensor_path)
-            images.append({
-                "image_url": request.build_absolute_uri(f"{settings.MEDIA_URL}{multi_sensor_filename}"),
-                "title": "多传感器角速度随时间变化曲线",
-                "description": "同一张图展示各个传感器的角速度变化，便于观察发力时延",
-                "analysis_id": latest_analysis.id,
-                "session_id": latest_analysis.session_id,
-                "created_at": latest_analysis.analysis_time.isoformat(),
-                "file_path": multi_sensor_path,
-                "file_size": file_size
-            })
-            print(f"✅ 找到图片文件，大小: {file_size} bytes")
         
         # 如果没有找到任何图片，返回默认图片信息
         if not images:
@@ -1962,7 +1973,9 @@ def mark_data_collection_complete(request):
                     # 只保留有数据的传感器
                     sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
                     if sensor_data and time_labels:
-                        generate_multi_sensor_curve(sensor_data, time_labels)
+                        # 生成终止分析专用的图片文件名
+                        stop_filename = f"stop_analysis_session_{session.id}_{analysis_result.id}.jpg"
+                        generate_multi_sensor_curve(sensor_data, time_labels, stop_filename, analysis_result)
                         print(f"✅ 会话 {session.id} 分析图片生成成功")
                     else:
                         print(f"⚠️ 会话 {session.id} 无有效数据生成图片")
@@ -2105,7 +2118,9 @@ def esp32_mark_upload_complete(request):
                     # 只保留有数据的传感器
                     sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
                     if sensor_data and time_labels:
-                        generate_multi_sensor_curve(sensor_data, time_labels)
+                        # 生成ESP32上传专用的图片文件名
+                        esp32_filename = f"esp32_upload_session_{session.id}_{analysis_result.id}.jpg"
+                        generate_multi_sensor_curve(sensor_data, time_labels, esp32_filename, analysis_result)
                         print(f"✅ ESP32会话 {session.id} 分析图片生成成功")
                     else:
                         print(f"⚠️ ESP32会话 {session.id} 无有效数据生成图片")
@@ -3220,29 +3235,53 @@ def miniprogram_get_images(request):
                     }, status=404)
                 session = analysis_result.session
             
-            # 查找图片文件
-            image_files = [
-                'latest_multi_sensor_curve.jpg',
-                f'session_{session.id}_analysis.jpg',
-                'test_analysis_curve.jpg'
-            ]
-            
+            # 优先从数据库获取图片信息
             found_images = []
             
-            for filename in image_files:
-                file_path = os.path.join(settings.MEDIA_ROOT, filename)
-                if os.path.exists(file_path):
-                    file_size = os.path.getsize(file_path)
-                    file_mtime = os.path.getmtime(file_path)
-                    
+            # 1. 首先检查分析结果是否有关联的图片
+            if analysis_result.has_image():
+                image_path = os.path.join(settings.MEDIA_ROOT, analysis_result.analysis_image)
+                if os.path.exists(image_path):
+                    file_size = os.path.getsize(image_path)
                     found_images.append({
-                        'filename': filename,
-                        'url': request.build_absolute_uri(f'{settings.MEDIA_URL}{filename}'),
+                        'filename': analysis_result.analysis_image,
+                        'url': request.build_absolute_uri(analysis_result.get_image_url()),
                         'size': file_size,
-                        'modified_time': datetime.fromtimestamp(file_mtime).isoformat(),
-                        'title': get_image_title(filename),
-                        'description': get_image_description(filename)
+                        'modified_time': analysis_result.image_generated_time.isoformat() if analysis_result.image_generated_time else None,
+                        'title': f'会话 {session.id} 分析图片',
+                        'description': f'会话 {session.id} 的多传感器角速度分析图',
+                        'from_database': True,
+                        'analysis_id': analysis_result.id
                     })
+                    print(f"✅ 从数据库获取到分析图片: {analysis_result.analysis_image}")
+            
+            # 2. 如果数据库中没有图片，查找备用图片文件
+            if not found_images:
+                backup_image_files = [
+                    f'analysis_session_{session.id}_{analysis_result.id}.jpg',
+                    f'session_{session.id}_auto_generated.jpg',
+                    'latest_multi_sensor_curve.jpg',
+                    f'session_{session.id}_analysis.jpg'
+                ]
+                
+                for filename in backup_image_files:
+                    file_path = os.path.join(settings.MEDIA_ROOT, filename)
+                    if os.path.exists(file_path):
+                        file_size = os.path.getsize(file_path)
+                        file_mtime = os.path.getmtime(file_path)
+                        
+                        found_images.append({
+                            'filename': filename,
+                            'url': request.build_absolute_uri(f'{settings.MEDIA_URL}{filename}'),
+                            'size': file_size,
+                            'modified_time': datetime.fromtimestamp(file_mtime).isoformat(),
+                            'title': get_image_title(filename),
+                            'description': get_image_description(filename),
+                            'from_database': False,
+                            'backup_source': True
+                        })
+                        print(f"✅ 找到备用图片文件: {filename}")
+                        break  # 找到第一个就停止
             
             # 如果没有找到图片，尝试生成一个
             if not found_images:

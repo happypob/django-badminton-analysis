@@ -1780,8 +1780,8 @@ def latest_analysis_images(request):
             'debug_info': {
                 'media_root': settings.MEDIA_ROOT,
                 'media_url': settings.MEDIA_URL,
-                'image_path': multi_sensor_path,
-                'file_exists': os.path.exists(multi_sensor_path)
+                'total_image_files': len(all_files) if 'all_files' in locals() else 0,
+                'latest_image': latest_file if 'latest_file' in locals() else None
             }
         }, safe=False)
         

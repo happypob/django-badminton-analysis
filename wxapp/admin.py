@@ -1,16 +1,18 @@
 from django.contrib import admin
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.urls import path
 from django.shortcuts import render
 from django.contrib import messages
 from django.utils.html import format_html
 from django.db import models
+from django.urls import reverse
 from .models import WxUser, DeviceBind, SensorData, DeviceGroup, DataCollectionSession, AnalysisResult
 from .views import process_mat_data, generate_detailed_report
 from scipy.io import loadmat
 import tempfile
 import os
 import json
+import csv
 
 # 自定义Admin配置
 @admin.register(WxUser)
@@ -39,11 +41,73 @@ class DeviceGroupAdmin(admin.ModelAdmin):
 
 @admin.register(DataCollectionSession)
 class DataCollectionSessionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'device_group', 'start_time', 'end_time', 'status', 'analysis_status', 'view_analysis_image')
+    list_display = ('id', 'user', 'device_group', 'start_time', 'end_time', 'status', 'analysis_status', 'view_analysis_image', 'export_csv_link')
     list_filter = ('status', 'start_time', 'device_group')
     search_fields = ('user__openid', 'device_group__group_code')
     readonly_fields = ('start_time', 'analysis_time')
     
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'export_csv/<int:session_id>/',
+                self.admin_site.admin_view(self.export_session_csv),
+                name=f"{self.model._meta.app_label}_{self.model._meta.model_name}_export_csv",
+            ),
+        ]
+        return custom_urls + urls
+
+    def export_session_csv(self, request, session_id):
+        """导出指定会话的传感器数据为CSV"""
+        try:
+            session = DataCollectionSession.objects.select_related('user', 'device_group').get(id=session_id)
+        except DataCollectionSession.DoesNotExist:
+            messages.error(request, '会话不存在')
+            return render(request, 'admin/index.html')
+
+        queryset = SensorData.objects.filter(session=session).order_by('timestamp')
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        filename = f"session_{session.id}_sensordata.csv"
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+        writer = csv.writer(response)
+        # CSV表头
+        writer.writerow([
+            'session_id',
+            'device_group',
+            'user_openid',
+            'device_code',
+            'sensor_type',
+            'timestamp',
+            'esp32_timestamp',
+            'data',
+        ])
+
+        for record in queryset.iterator(chunk_size=1000):
+            writer.writerow([
+                session.id,
+                session.device_group.group_code if session.device_group else '',
+                session.user.openid if session.user else '',
+                record.device_code,
+                record.get_sensor_type_display(),
+                record.timestamp.strftime('%Y-%m-%d %H:%M:%S') if record.timestamp else '',
+                record.esp32_timestamp.strftime('%Y-%m-%d %H:%M:%S') if record.esp32_timestamp else '',
+                record.data,
+            ])
+
+        return response
+
+    def export_csv_link(self, obj):
+        app_label = self.model._meta.app_label
+        model_name = self.model._meta.model_name
+        url = reverse(f'{self.admin_site.name}:{app_label}_{model_name}_export_csv', args=[obj.id])
+        return format_html(
+            '<a href="{}" class="button" style="background:#0069d9;color:#fff;padding:4px 8px;border-radius:3px;text-decoration:none;">导出CSV</a>',
+            url
+        )
+    export_csv_link.short_description = '导出CSV'
+
     def analysis_time(self, obj):
         try:
             return obj.analysisresult.analysis_time

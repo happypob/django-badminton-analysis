@@ -1676,17 +1676,54 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
         }
         
         plt.figure(figsize=(12, 6))
-        # 优先使用已安装的 Noto CJK 中文字体，确保中文标题/图例正常显示
-        plt.rcParams['font.sans-serif'] = [
-            'Noto Sans CJK SC',
-            'Source Han Sans CN',
-            'WenQuanYi Zen Hei',
-            'SimHei',
-            'Microsoft YaHei',
-            'DejaVu Sans',
-            'Arial Unicode MS'
-        ]
-        plt.rcParams['axes.unicode_minus'] = False
+        # 动态检测并绑定中文字体，兼容不同系统包的字体注册名
+        try:
+            import os as _os
+            from matplotlib import font_manager as _fm
+            # 首选名称集合
+            _candidates = [
+                'Noto Sans CJK SC', 'Noto Sans CJK', 'NotoSansCJK',
+                'Source Han Sans CN', 'Source Han Sans SC',
+                'WenQuanYi Micro Hei', 'WenQuanYi Zen Hei',
+                'Microsoft YaHei', 'SimHei'
+            ]
+            _chosen = None
+            for _name in _candidates:
+                try:
+                    _path = _fm.findfont(_name, fallback_to_default=False)
+                    if _path and _os.path.exists(_path):
+                        _prop = _fm.FontProperties(fname=_path)
+                        _font_name = _prop.get_name()
+                        plt.rcParams['font.sans-serif'] = [_font_name]
+                        plt.rcParams['axes.unicode_minus'] = False
+                        print(f"✅ 使用中文字体: {_font_name} ({_path})")
+                        _chosen = _font_name
+                        break
+                except Exception:
+                    continue
+            if not _chosen:
+                # 扫描字体列表，模糊匹配 CJK 字体
+                for _f in _fm.fontManager.ttflist:
+                    _n = (_f.name or '')
+                    if ('NotoSansCJK' in _n) or ('Noto Sans CJK' in _n) or ('Source Han Sans' in _n) or ('WenQuanYi' in _n):
+                        _prop = _fm.FontProperties(fname=_f.fname)
+                        _font_name = _prop.get_name()
+                        plt.rcParams['font.sans-serif'] = [_font_name]
+                        plt.rcParams['axes.unicode_minus'] = False
+                        print(f"✅ 自动检测中文字体: {_font_name} ({_f.fname})")
+                        _chosen = _font_name
+                        break
+            if not _chosen:
+                # 兜底：保持原先候选顺序
+                plt.rcParams['font.sans-serif'] = [
+                    'Noto Sans CJK SC', 'Source Han Sans CN', 'WenQuanYi Zen Hei',
+                    'SimHei', 'Microsoft YaHei', 'DejaVu Sans', 'Arial Unicode MS'
+                ]
+                plt.rcParams['axes.unicode_minus'] = False
+                print("⚠️ 未找到已安装的中文字体，可能仍会出现方框")
+        except Exception as _fe:
+            print(f"⚠️ 中文字体设置失败: {str(_fe)}")
+            plt.rcParams['axes.unicode_minus'] = False
         
         # 验证数据长度一致性
         time_len = len(time)

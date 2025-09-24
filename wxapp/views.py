@@ -1714,6 +1714,60 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
                         _chosen = _font_name
                         break
             if not _chosen:
+                # 直接扫描系统字体目录并按路径注册（适配 OpenCloudOS 安装路径）
+                _font_dirs = [
+                    '/usr/share/fonts/google-noto-cjk',
+                    '/usr/share/fonts',
+                ]
+                _picked_path = None
+                for _d in _font_dirs:
+                    try:
+                        if _os.path.isdir(_d):
+                            for _root, _dirs, _files in _os.walk(_d):
+                                # 优先选择包含 SC 的 NotoSansCJK 字体
+                                _sorted_files = sorted(_files)
+                                for _fn in _sorted_files:
+                                    _lower = _fn.lower()
+                                    if _lower.endswith(('.ttc', '.otf', '.ttf')) and (
+                                        'notosanscjk' in _lower or 'sourcehansans' in _lower or 'wqy' in _lower
+                                    ):
+                                        # 优先 SC/简体
+                                        if ('sc' in _lower) or ('cn' in _lower) or ('zh' in _lower):
+                                            _picked_path = _os.path.join(_root, _fn)
+                                            break
+                                if _picked_path:
+                                    break
+                                # 若未命中 SC，再接受任一 CJK 字体
+                                for _fn in _sorted_files:
+                                    _lower = _fn.lower()
+                                    if _lower.endswith(('.ttc', '.otf', '.ttf')) and (
+                                        'notosanscjk' in _lower or 'sourcehansans' in _lower or 'wqy' in _lower
+                                    ):
+                                        _picked_path = _os.path.join(_root, _fn)
+                                        break
+                                if _picked_path:
+                                    break
+                    except Exception:
+                        continue
+                    if _picked_path:
+                        break
+                if _picked_path and _os.path.exists(_picked_path):
+                    try:
+                        _fm.fontManager.addfont(_picked_path)
+                        # 重建缓存以确保可用
+                        try:
+                            _fm._rebuild()
+                        except Exception:
+                            pass
+                        _prop = _fm.FontProperties(fname=_picked_path)
+                        _font_name = _prop.get_name()
+                        plt.rcParams['font.sans-serif'] = [_font_name]
+                        plt.rcParams['axes.unicode_minus'] = False
+                        print(f"✅ 通过路径注册中文字体: {_font_name} ({_picked_path})")
+                        _chosen = _font_name
+                    except Exception as _e2:
+                        print(f"⚠️ 通过路径注册字体失败: {_picked_path} - {str(_e2)}")
+            if not _chosen:
                 # 兜底：保持原先候选顺序
                 plt.rcParams['font.sans-serif'] = [
                     'Noto Sans CJK SC', 'Source Han Sans CN', 'WenQuanYi Zen Hei',

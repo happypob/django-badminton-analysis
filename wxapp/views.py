@@ -1676,7 +1676,16 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
         }
         
         plt.figure(figsize=(12, 6))
-        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'SimHei', 'Arial Unicode MS']
+        # 优先使用已安装的 Noto CJK 中文字体，确保中文标题/图例正常显示
+        plt.rcParams['font.sans-serif'] = [
+            'Noto Sans CJK SC',
+            'Source Han Sans CN',
+            'WenQuanYi Zen Hei',
+            'SimHei',
+            'Microsoft YaHei',
+            'DejaVu Sans',
+            'Arial Unicode MS'
+        ]
         plt.rcParams['axes.unicode_minus'] = False
         
         # 验证数据长度一致性

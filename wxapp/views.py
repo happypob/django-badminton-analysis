@@ -604,16 +604,49 @@ def esp32_upload_sensor_data(request):
                         'error': 'Session not found or invalid session_id'
                     }, status=404)
             
-            # 添加时间戳信息
+            # 解析ESP32时间戳（支持 Unix ms / ISO / HHMMSSmmm）并保存
+            esp32_timestamp_dt = None
             if timestamp:
                 sensor_data['esp32_timestamp'] = timestamp
+                try:
+                    from datetime import datetime, timedelta
+                    import re as _re
+                    from django.utils import timezone as _tz
+                    # Helper: parse timestamp
+                    def _parse_ts(ts_val, session_obj):
+                        # int/float -> unix ms
+                        if isinstance(ts_val, (int, float)):
+                            from datetime import timezone as _dt_tz
+                            return datetime.fromtimestamp(ts_val / 1000.0, tz=_dt_tz.utc)
+                        if isinstance(ts_val, str):
+                            s = ts_val.strip()
+                            # ISO
+                            try:
+                                return _tz.datetime.fromisoformat(s.replace('Z', '+00:00'))
+                            except Exception:
+                                pass
+                            # HHMMSSmmm (9 digits)
+                            if _re.fullmatch(r"\d{9}", s):
+                                hh = int(s[0:2]); mm = int(s[2:4]); ss = int(s[4:6]); mmm = int(s[6:9])
+                                base_date = (session_obj.start_time.astimezone(_tz.get_current_timezone()) if session_obj else _tz.now()).date()
+                                dt_naive = datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss, mmm * 1000)
+                                aware = _tz.make_aware(dt_naive, _tz.get_current_timezone())
+                                # 跨天修正：若比会话开始早很多，则加一天
+                                if session_obj and aware < session_obj.start_time - timedelta(hours=6):
+                                    aware = aware + timedelta(days=1)
+                                return aware
+                        return None
+                    esp32_timestamp_dt = _parse_ts(timestamp, session)
+                except Exception:
+                    esp32_timestamp_dt = None
             
             # 存储传感器数据
             sensor_data_obj = SensorData.objects.create(
                 session=session,
                 device_code=device_code,
                 sensor_type=sensor_type,
-                data=json.dumps(sensor_data)
+                data=json.dumps(sensor_data),
+                esp32_timestamp=esp32_timestamp_dt
             )
             
             # 返回成功响应
@@ -807,10 +840,23 @@ def esp32_batch_upload(request):
                                     timestamp_str / 1000.0, tz=dt_timezone.utc
                                 )
                             elif isinstance(timestamp_str, str):
-                                # ISO格式字符串
-                                esp32_timestamp = timezone.datetime.fromisoformat(
-                                    timestamp_str.replace('Z', '+00:00')
-                                )
+                                # ISO格式 或 HHMMSSmmm 字符串
+                                try:
+                                    esp32_timestamp = timezone.datetime.fromisoformat(
+                                        timestamp_str.replace('Z', '+00:00')
+                                    )
+                                except Exception:
+                                    import re as _re
+                                    from datetime import timedelta
+                                    # HHMMSSmmm 9位
+                                    if _re.fullmatch(r"\d{9}", timestamp_str):
+                                        hh = int(timestamp_str[0:2]); mm = int(timestamp_str[2:4]); ss = int(timestamp_str[4:6]); mmm = int(timestamp_str[6:9])
+                                        base_date = (session.start_time if session else timezone.now()).astimezone(timezone.get_current_timezone()).date()
+                                        dt_naive = datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss, mmm * 1000)
+                                        aware = timezone.make_aware(dt_naive, timezone.get_current_timezone())
+                                        if session and aware < session.start_time - timedelta(hours=6):
+                                            aware = aware + timedelta(days=1)
+                                        esp32_timestamp = aware
                         except (ValueError, TypeError) as e:
                             # 时间戳解析失败，记录错误但继续处理
                             print(f"Warning: Failed to parse ESP32 timestamp for item {i}: {e}")
@@ -1181,21 +1227,14 @@ def extract_angular_velocity_data(session):
         wrist_times, wrist_gyro = extract_gyro_data(wrist_data)
         racket_times, racket_gyro = extract_gyro_data(racket_data)
         
-        # 如果没有数据，生成示例数据
-        if not waist_times:
-            # 生成示例数据
-            time_points = list(range(0, 1000, 10))  # 0-1000ms, 每10ms一个点
-            waist_gyro = [abs(math.sin(t/100) * 2 + math.sin(t/50) * 1.5) for t in time_points]
-            shoulder_gyro = [abs(math.sin((t-50)/100) * 2.5 + math.sin((t-50)/50) * 1.8) for t in time_points]
-            wrist_gyro = [abs(math.sin((t-100)/100) * 3 + math.sin((t-100)/50) * 2) for t in time_points]
-            racket_gyro = [abs(math.sin((t-150)/100) * 3.5 + math.sin((t-150)/50) * 2.5) for t in time_points]
-            
+        # 如果所有传感器均无数据，则返回空结果（不再使用示例数据）
+        if not any([waist_times, shoulder_times, wrist_times, racket_times]):
             return {
-                'time_labels': time_points,
-                'waist_data': waist_gyro,
-                'shoulder_data': shoulder_gyro,
-                'wrist_data': wrist_gyro,
-                'racket_data': racket_gyro
+                'time_labels': [],
+                'waist_data': [],
+                'shoulder_data': [],
+                'wrist_data': [],
+                'racket_data': []
             }
         
         # 🔧 基于完整时间戳的数据对齐处理

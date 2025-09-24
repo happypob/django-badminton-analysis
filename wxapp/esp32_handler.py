@@ -89,16 +89,46 @@ class ESP32DataHandler:
                         'error': 'Session not found'
                     }
             
-            # 添加时间戳信息
+            # 添加时间戳信息（保留原值到数据体），并尝试解析为DateTime保存
+            esp32_timestamp_dt = None
             if timestamp:
                 data['esp32_timestamp'] = timestamp
+                try:
+                    from datetime import datetime, timedelta
+                    from django.utils import timezone as _tz
+                    import re as _re
+                    def _parse_ts(ts_val, session_obj):
+                        if isinstance(ts_val, (int, float)):
+                            from datetime import timezone as _dt_tz
+                            return datetime.fromtimestamp(ts_val / 1000.0, tz=_dt_tz.utc)
+                        if isinstance(ts_val, str):
+                            s = ts_val.strip()
+                            # ISO
+                            try:
+                                return _tz.datetime.fromisoformat(s.replace('Z', '+00:00'))
+                            except Exception:
+                                pass
+                            # HHMMSSmmm
+                            if _re.fullmatch(r"\d{9}", s):
+                                hh = int(s[0:2]); mm = int(s[2:4]); ss = int(s[4:6]); mmm = int(s[6:9])
+                                base_date = (session_obj.start_time.astimezone(_tz.get_current_timezone()) if session_obj else _tz.now()).date()
+                                dt_naive = datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss, mmm * 1000)
+                                aware = _tz.make_aware(dt_naive, _tz.get_current_timezone())
+                                if session_obj and aware < session_obj.start_time - timedelta(hours=6):
+                                    aware = aware + timedelta(days=1)
+                                return aware
+                        return None
+                    esp32_timestamp_dt = _parse_ts(timestamp, session)
+                except Exception:
+                    esp32_timestamp_dt = None
             
             # 存储数据
             sensor_data_obj = SensorData.objects.create(
                 session=session,
                 device_code=device_code,
                 sensor_type=sensor_type,
-                data=json.dumps(data)
+                data=json.dumps(data),
+                esp32_timestamp=esp32_timestamp_dt
             )
             
             return {

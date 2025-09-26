@@ -1049,25 +1049,16 @@ def analyze_session_data(session):
             rom_data=analysis_result['rom_data']
         )
         
-        # 自动生成分析图片
+        # 自动生成合角速度分析图片
         try:
             angle_data = extract_angular_velocity_data(session)
-            time_labels = angle_data['time_labels']
-            sensor_data_for_plot = {
-                'waist': angle_data['waist_data'],
-                'shoulder': angle_data['shoulder_data'],
-                'wrist': angle_data['wrist_data'],
-                'racket': angle_data['racket_data']
-            }
-            # 只保留有数据的传感器
-            sensor_data_for_plot = {k: v for k, v in sensor_data_for_plot.items() if v and any(val != 0 for val in v)}
-            if sensor_data_for_plot and time_labels:
+            if angle_data['sensor_groups']:
                 # 生成会话专用的图片文件名
                 session_filename = f"analysis_session_{session.id}_{result.id}.jpg"
-                generate_multi_sensor_curve(sensor_data_for_plot, time_labels, session_filename, result)
-                print(f"✅ 会话 {session.id} 分析图片生成成功")
+                generate_multi_sensor_curve(angle_data, None, session_filename, result)
+                print(f"✅ 会话 {session.id} 合角速度分析图片生成成功")
             else:
-                print(f"⚠️ 会话 {session.id} 无有效数据生成图片")
+                print(f"⚠️ 会话 {session.id} 无有效传感器数据生成图片")
         except Exception as img_error:
             print(f"⚠️ 会话 {session.id} 图片生成失败: {str(img_error)}")
         
@@ -1148,229 +1139,125 @@ def generate_detailed_report(analysis_result, session):
     return report
 
 def extract_angular_velocity_data(session):
-    """从会话数据中提取角速度数据用于图表显示"""
+    """从会话数据中提取角速度数据用于图表显示，按照analyze_sensor_csv.py的逻辑"""
     try:
-        # 获取各传感器的数据，优先按ESP32时间戳排序
-        def get_sensor_data_ordered(sensor_type):
-            # 先尝试获取有ESP32时间戳的数据
-            esp32_data = SensorData.objects.filter(
-                session=session, 
-                sensor_type=sensor_type,
-                esp32_timestamp__isnull=False
-            ).order_by('esp32_timestamp')
-            
-            if esp32_data.exists():
-                return esp32_data
-            else:
-                # 如果没有ESP32时间戳，回退到服务器时间戳
-                return SensorData.objects.filter(
-                    session=session, 
-                    sensor_type=sensor_type
-                ).order_by('timestamp')
+        import numpy as np
         
-        waist_data = get_sensor_data_ordered('waist')
-        shoulder_data = get_sensor_data_ordered('shoulder')
-        wrist_data = get_sensor_data_ordered('wrist')
-        racket_data = get_sensor_data_ordered('racket')
+        # 获取所有传感器数据，按sensor_type分组
+        all_sensor_data = SensorData.objects.filter(session=session).order_by('timestamp')
         
-        # 添加传感器数据统计信息
+        if not all_sensor_data.exists():
+            return {
+                'time_labels': [],
+                'sensor_groups': {}
+            }
+        
+        # 按传感器类型分组数据
+        sensor_groups = {}
+        for data in all_sensor_data:
+            sensor_type = data.sensor_type
+            if sensor_type not in sensor_groups:
+                sensor_groups[sensor_type] = []
+            sensor_groups[sensor_type].append(data)
+        
         print(f"📊 传感器数据统计 (会话 {session.id}):")
-        print(f"   腰部传感器: {waist_data.count()} 条记录")
-        print(f"   肩部传感器: {shoulder_data.count()} 条记录")
-        print(f"   手腕传感器: {wrist_data.count()} 条记录")
-        print(f"   球拍传感器: {racket_data.count()} 条记录")
+        for sensor_type, data_list in sensor_groups.items():
+            print(f"   {sensor_type}传感器: {len(data_list)} 条记录")
         
-        # 检查是否有数据重复分配的问题
-        all_session_data = SensorData.objects.filter(session=session)
-        print(f"   会话总数据条数: {all_session_data.count()}")
-        sensor_type_counts = {}
-        device_codes = set()
-        for data in all_session_data:
-            sensor_type_counts[data.sensor_type] = sensor_type_counts.get(data.sensor_type, 0) + 1
-            device_codes.add(data.device_code)
-        print(f"   传感器类型分布: {sensor_type_counts}")
-        print(f"   设备编码: {list(device_codes)}")
-        
-        # 提取角速度数据
-        def extract_gyro_data(sensor_data):
+        # 提取角速度数据并计算合角速度
+        def extract_gyro_magnitude(sensor_data_list):
+            """提取角速度数据并计算合角速度（幅值）"""
             times = []
             gyro_magnitudes = []
             
-            for data in sensor_data:
+            for data in sensor_data_list:
                 try:
                     data_dict = json.loads(data.data)
                     gyro = data_dict.get('gyro', [0, 0, 0])
-                    # 计算角速度幅值
-                    gyro_magnitude = (gyro[0]**2 + gyro[1]**2 + gyro[2]**2)**0.5
                     
-                    # 使用相对时间（毫秒），优先使用ESP32时间戳
-                    if times:
-                        # 优先使用ESP32时间戳计算时间差
-                        if data.esp32_timestamp and sensor_data[0].esp32_timestamp:
-                            time_ms = (data.esp32_timestamp - sensor_data[0].esp32_timestamp).total_seconds() * 1000
-                        else:
-                            # 回退到服务器时间戳
-                            time_ms = (data.timestamp - sensor_data[0].timestamp).total_seconds() * 1000
+                    # 计算合角速度（幅值）- 按照analyze_sensor_csv.py的magnitude函数逻辑
+                    gyro_magnitude = np.sqrt(gyro[0]**2 + gyro[1]**2 + gyro[2]**2)
+                    
+                    # 使用时间戳作为时间轴
+                    if data.esp32_timestamp:
+                        time_s = data.esp32_timestamp.timestamp()
                     else:
-                        time_ms = 0
+                        time_s = data.timestamp.timestamp()
                     
-                    times.append(time_ms)
+                    times.append(time_s)
                     gyro_magnitudes.append(gyro_magnitude)
-                except (json.JSONDecodeError, KeyError):
+                except (json.JSONDecodeError, KeyError, AttributeError):
                     continue
             
             return times, gyro_magnitudes
         
-        # 提取各传感器数据
-        waist_times, waist_gyro = extract_gyro_data(waist_data)
-        shoulder_times, shoulder_gyro = extract_gyro_data(shoulder_data)
-        wrist_times, wrist_gyro = extract_gyro_data(wrist_data)
-        racket_times, racket_gyro = extract_gyro_data(racket_data)
+        # 为每个传感器提取数据
+        processed_sensor_groups = {}
+        for sensor_type, data_list in sensor_groups.items():
+            times, gyro_magnitudes = extract_gyro_magnitude(data_list)
+            if times and gyro_magnitudes:
+                processed_sensor_groups[sensor_type] = {
+                    'times': times,
+                    'gyro_magnitudes': gyro_magnitudes
+                }
+                print(f"✅ {sensor_type}: {len(times)} 个数据点")
         
-        # 如果所有传感器均无数据，则返回空结果（不再使用示例数据）
-        if not any([waist_times, shoulder_times, wrist_times, racket_times]):
+        if not processed_sensor_groups:
             return {
                 'time_labels': [],
-                'waist_data': [],
-                'shoulder_data': [],
-                'wrist_data': [],
-                'racket_data': []
+                'sensor_groups': {}
             }
         
-        # 🔧 基于完整时间戳的数据对齐处理
-        print(f"🔍 传感器数据调试:")
-        print(f"腰部: 时间点={len(waist_times)}, 数据点={len(waist_gyro)}")
-        print(f"肩部: 时间点={len(shoulder_times)}, 数据点={len(shoulder_gyro)}")
-        print(f"手腕: 时间点={len(wrist_times)}, 数据点={len(wrist_gyro)}")
-        print(f"球拍: 时间点={len(racket_times)}, 数据点={len(racket_gyro)}")
+        # 计算联合时间窗口（覆盖所有传感器数据的时间段）
+        all_times = []
+        for sensor_data in processed_sensor_groups.values():
+            all_times.extend(sensor_data['times'])
         
-        # 收集所有传感器的时间戳
-        all_timestamps = set()
-        sensor_data_map = {}
+        if not all_times:
+            return {
+                'time_labels': [],
+                'sensor_groups': {}
+            }
         
-        if waist_times and waist_gyro:
-            all_timestamps.update(waist_times)
-            sensor_data_map['waist'] = dict(zip(waist_times, waist_gyro))
-            print(f"腰部时间范围: {min(waist_times):.1f} - {max(waist_times):.1f} ms，数据变化范围: {min(waist_gyro):.3f} - {max(waist_gyro):.3f}")
+        master_start = min(all_times)
+        master_end = max(all_times)
+        
+        print(f"📏 联合时间窗口: {master_start:.3f} - {master_end:.3f} 秒")
+        print(f"   时间跨度: {master_end - master_start:.3f} 秒")
+        
+        # 为每个传感器生成相对于master_start的时间轴和对应的角速度数据
+        aligned_sensor_data = {}
+        for sensor_type, sensor_data in processed_sensor_groups.items():
+            times = sensor_data['times']
+            gyro_magnitudes = sensor_data['gyro_magnitudes']
             
-        if shoulder_times and shoulder_gyro:
-            all_timestamps.update(shoulder_times)
-            sensor_data_map['shoulder'] = dict(zip(shoulder_times, shoulder_gyro))
-            print(f"肩部时间范围: {min(shoulder_times):.1f} - {max(shoulder_times):.1f} ms，数据变化范围: {min(shoulder_gyro):.3f} - {max(shoulder_gyro):.3f}")
+            # 转换为相对于master_start的时间（秒）
+            relative_times = [t - master_start for t in times]
             
-        if wrist_times and wrist_gyro:
-            all_timestamps.update(wrist_times)
-            sensor_data_map['wrist'] = dict(zip(wrist_times, wrist_gyro))
-            print(f"手腕时间范围: {min(wrist_times):.1f} - {max(wrist_times):.1f} ms，数据变化范围: {min(wrist_gyro):.3f} - {max(wrist_gyro):.3f}")
+            aligned_sensor_data[sensor_type] = {
+                'times': relative_times,
+                'gyro_magnitudes': gyro_magnitudes
+            }
             
-        if racket_times and racket_gyro:
-            all_timestamps.update(racket_times)
-            sensor_data_map['racket'] = dict(zip(racket_times, racket_gyro))
-            print(f"球拍时间范围: {min(racket_times):.1f} - {max(racket_times):.1f} ms，数据变化范围: {min(racket_gyro):.3f} - {max(racket_gyro):.3f}")
-        
-        # 创建统一的时间轴（排序后的所有时间戳）
-        unified_time_axis = sorted(list(all_timestamps))
-        print(f"📏 统一时间轴长度: {len(unified_time_axis)}")
-        print(f"时间范围: {unified_time_axis[0]} - {unified_time_axis[-1]}")
-        
-        # 为每个传感器在统一时间轴上插值/填充数据
-        def interpolate_sensor_data(sensor_name, time_axis, data_map):
-            """在统一时间轴上为传感器数据插值"""
-            result = []
-            if not data_map:
-                print(f"⚠️ {sensor_name} 传感器无数据，填充零值")
-                return [0.0] * len(time_axis)
-            
-            print(f"🔧 {sensor_name} 传感器数据插值，原始数据点: {len(data_map)}")
-            timestamps = sorted(data_map.keys())
-            original_time_range = f"{min(timestamps):.1f} - {max(timestamps):.1f}"
-            print(f"   时间范围: {original_time_range} ms")
-            
-            for t in time_axis:
-                if t in data_map:
-                    # 精确匹配
-                    result.append(data_map[t])
-                else:
-                    # 检查是否在传感器的时间范围内
-                    if min(timestamps) <= t <= max(timestamps):
-                        # 在范围内，使用线性插值或最近邻
-                        closest_timestamp = min(timestamps, key=lambda x: abs(x - t))
-                        result.append(data_map[closest_timestamp])
-                    else:
-                        # 超出范围，填充零值
-                        result.append(0.0)
-            
-            # 统计非零数据点
-            non_zero_count = sum(1 for x in result if x > 0.001)
-            print(f"   插值后非零数据点: {non_zero_count}/{len(result)}")
-            return result
-        
-        # 为每个传感器生成对齐的数据
-        aligned_waist = interpolate_sensor_data('waist', unified_time_axis, sensor_data_map.get('waist', {}))
-        aligned_shoulder = interpolate_sensor_data('shoulder', unified_time_axis, sensor_data_map.get('shoulder', {}))
-        aligned_wrist = interpolate_sensor_data('wrist', unified_time_axis, sensor_data_map.get('wrist', {}))
-        aligned_racket = interpolate_sensor_data('racket', unified_time_axis, sensor_data_map.get('racket', {}))
-        
-        # 运动检测：检查每个传感器是否真的有运动
-        def detect_motion(data, sensor_name, threshold=0.01):
-            """检测传感器是否有实际运动"""
-            if not data:
-                return False
-            
-            # 计算数据的变化程度
-            data_range = max(data) - min(data)
-            mean_value = sum(data) / len(data)
-            variance = sum((x - mean_value) ** 2 for x in data) / len(data)
-            std_dev = variance ** 0.5
-            
-            has_motion = data_range > threshold or std_dev > threshold
-            print(f"🔍 {sensor_name} 运动检测: 变化范围={data_range:.4f}, 标准差={std_dev:.4f}, 有运动={has_motion}")
-            return has_motion
-        
-        # 检测每个传感器的运动状态
-        waist_has_motion = detect_motion(aligned_waist, '腰部')
-        shoulder_has_motion = detect_motion(aligned_shoulder, '肩部')
-        wrist_has_motion = detect_motion(aligned_wrist, '手腕')
-        racket_has_motion = detect_motion(aligned_racket, '球拍')
-        
-        # 如果没有实际运动，将数据设为零
-        if not waist_has_motion:
-            aligned_waist = [0.0] * len(aligned_waist)
-            print("⚠️ 腰部传感器无明显运动，数据已清零")
-        if not shoulder_has_motion:
-            aligned_shoulder = [0.0] * len(aligned_shoulder)
-            print("⚠️ 肩部传感器无明显运动，数据已清零")
-        if not wrist_has_motion:
-            aligned_wrist = [0.0] * len(aligned_wrist)
-            print("⚠️ 手腕传感器无明显运动，数据已清零")
-        if not racket_has_motion:
-            aligned_racket = [0.0] * len(aligned_racket)
-            print("⚠️ 球拍传感器无明显运动，数据已清零")
-        
-        print(f"✅ 对齐后数据长度检查:")
-        print(f"时间轴: {len(unified_time_axis)}")
-        print(f"腰部: {len(aligned_waist)} (有运动: {waist_has_motion})")
-        print(f"肩部: {len(aligned_shoulder)} (有运动: {shoulder_has_motion})")
-        print(f"手腕: {len(aligned_wrist)} (有运动: {wrist_has_motion})")
-        print(f"球拍: {len(aligned_racket)} (有运动: {racket_has_motion})")
+            print(f"🔧 {sensor_type} 对齐后: {len(relative_times)} 个数据点")
+            print(f"   时间范围: {min(relative_times):.3f} - {max(relative_times):.3f} 秒")
+            if gyro_magnitudes:
+                print(f"   角速度范围: {min(gyro_magnitudes):.3f} - {max(gyro_magnitudes):.3f} rad/s")
         
         return {
-            'time_labels': unified_time_axis,
-            'waist_data': aligned_waist,
-            'shoulder_data': aligned_shoulder,
-            'wrist_data': aligned_wrist,
-            'racket_data': aligned_racket
+            'time_labels': [],  # 不再使用统一时间轴，让每个传感器使用自己的时间轴
+            'sensor_groups': aligned_sensor_data,
+            'master_start': master_start,
+            'master_end': master_end
         }
         
     except Exception as e:
-        # 如果出错，返回示例数据
-        time_points = list(range(0, 1000, 10))
+        print(f"❌ 提取角速度数据失败: {str(e)}")
+        import traceback
+        print(f"详细错误: {traceback.format_exc()}")
         return {
-            'time_labels': time_points,
-            'waist_data': [abs(math.sin(t/100) * 2) for t in time_points],
-            'shoulder_data': [abs(math.sin((t-50)/100) * 2.5) for t in time_points],
-            'wrist_data': [abs(math.sin((t-100)/100) * 3) for t in time_points],
-            'racket_data': [abs(math.sin((t-150)/100) * 3.5) for t in time_points]
+            'time_labels': [],
+            'sensor_groups': {}
         }
 
 def calculate_delay_score(phase_delay, ideal_delays):
@@ -1586,23 +1473,14 @@ def process_mat_data(mat_data, wx_user):
         # 执行分析
         analysis_result = analyze_session_data(session)
 
-        # 自动生成多传感器角速度时序图片
+        # 自动生成多传感器合角速度时序图片
         # 提取各传感器角速度和时间数据
         angle_data = extract_angular_velocity_data(session)
-        time_labels = angle_data['time_labels']
-        sensor_data = {
-            'waist': angle_data['waist_data'],
-            'shoulder': angle_data['shoulder_data'],
-            'wrist': angle_data['wrist_data'],
-            'racket': angle_data['racket_data']
-        }
-        # 只保留有数据的传感器
-        sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
-        if sensor_data and time_labels:
+        if angle_data['sensor_groups']:
             from wxapp.views import generate_multi_sensor_curve
             # 生成专用文件名并保存到数据库
             mat_filename = f"mat_analysis_session_{session.id}_{analysis_result.id}.jpg"
-            generate_multi_sensor_curve(sensor_data, time_labels, mat_filename, analysis_result)
+            generate_multi_sensor_curve(angle_data, None, mat_filename, analysis_result)
         
         return {
             'session_id': session.id,
@@ -1665,8 +1543,22 @@ def save_analysis_plot(data, filename, title, ylabel):
 # 生成多传感器曲线图片，只在分析数据更新时调用
 
 def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor_curve.jpg", analysis_result=None):
-    """生成多传感器角速度曲线图片"""
+    """生成多传感器合角速度曲线图片，按照analyze_sensor_csv.py的逻辑"""
     try:
+        # 检查数据格式，支持新的sensor_groups格式
+        if isinstance(sensor_data, dict) and 'sensor_groups' in sensor_data:
+            # 新格式：使用sensor_groups
+            sensor_groups = sensor_data['sensor_groups']
+            master_start = sensor_data.get('master_start', 0)
+        else:
+            # 旧格式：兼容处理
+            sensor_groups = sensor_data
+            master_start = 0
+        
+        if not sensor_groups:
+            print("⚠️ 没有传感器数据可绘制")
+            return None
+        
         sensor_names = {
             "waist": "腰部",
             "wrist": "手腕", 
@@ -1779,28 +1671,37 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
             print(f"⚠️ 中文字体设置失败: {str(_fe)}")
             plt.rcParams['axes.unicode_minus'] = False
         
-        # 验证数据长度一致性
-        time_len = len(time)
-        print(f"🎨 绘图数据检查: 时间轴长度={time_len}")
+        # 绘制每个传感器的合角速度曲线
+        print(f"🎨 开始绘制合角速度曲线，传感器数量: {len(sensor_groups)}")
         
-        for sensor, data in sensor_data.items():
-            if data and len(data) > 0:
-                data_len = len(data)
-                print(f"传感器 {sensor}: 数据长度={data_len}")
+        for sensor_type, sensor_data in sensor_groups.items():
+            if not sensor_data or 'times' not in sensor_data or 'gyro_magnitudes' not in sensor_data:
+                print(f"⚠️ {sensor_type} 传感器数据不完整，跳过")
+                continue
                 
-                # 确保时间轴和数据长度一致
-                if data_len == time_len:
-                    plt.plot(time, data, label=sensor_names.get(sensor, sensor), linewidth=2)
-                    print(f"✅ {sensor} 数据绘制成功")
-                else:
-                    # 如果长度不一致，使用较短的长度
-                    min_len = min(time_len, data_len)
-                    plt.plot(time[:min_len], data[:min_len], label=sensor_names.get(sensor, sensor), linewidth=2)
-                    print(f"⚠️ {sensor} 数据长度不匹配，使用较短长度: {min_len}")
+            times = sensor_data['times']
+            gyro_magnitudes = sensor_data['gyro_magnitudes']
+            
+            if not times or not gyro_magnitudes:
+                print(f"⚠️ {sensor_type} 传感器无有效数据，跳过")
+                continue
+            
+            # 确保时间轴和数据长度一致
+            if len(times) != len(gyro_magnitudes):
+                min_len = min(len(times), len(gyro_magnitudes))
+                times = times[:min_len]
+                gyro_magnitudes = gyro_magnitudes[:min_len]
+                print(f"⚠️ {sensor_type} 数据长度不匹配，使用较短长度: {min_len}")
+            
+            # 绘制合角速度曲线
+            plt.plot(times, gyro_magnitudes, label=sensor_names.get(sensor_type, sensor_type), linewidth=2)
+            print(f"✅ {sensor_type} 合角速度曲线绘制成功，数据点: {len(times)}")
+            print(f"   时间范围: {min(times):.3f} - {max(times):.3f} 秒")
+            print(f"   角速度范围: {min(gyro_magnitudes):.3f} - {max(gyro_magnitudes):.3f} rad/s")
         
-        plt.title("多传感器角速度随时间变化曲线", fontsize=14)
-        plt.xlabel("时间 (ms)", fontsize=12)
-        plt.ylabel("角速度 (rad/s)", fontsize=12)
+        plt.title("多传感器合角速度随时间变化曲线", fontsize=14)
+        plt.xlabel("时间 (s) from master start", fontsize=12)
+        plt.ylabel("合角速度 (rad/s)", fontsize=12)
         plt.legend(fontsize=10)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -1815,7 +1716,7 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
         plt.close()
         
         # 添加调试信息
-        print(f"✅ 图片生成成功:")
+        print(f"✅ 合角速度图片生成成功:")
         print(f"   文件路径: {filepath}")
         print(f"   文件大小: {os.path.getsize(filepath) if os.path.exists(filepath) else 0} bytes")
         print(f"   MEDIA_ROOT: {settings.MEDIA_ROOT}")
@@ -1832,7 +1733,7 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
         return filepath
         
     except Exception as e:
-        print(f"❌ 图片生成失败: {str(e)}")
+        print(f"❌ 合角速度图片生成失败: {str(e)}")
         import traceback
         print(f"详细错误: {traceback.format_exc()}")
         return None
@@ -2099,25 +2000,16 @@ def mark_data_collection_complete(request):
                 analysis_success = True
                 analysis_id = analysis_result.id
                 
-                # 自动生成最新分析图片
+                # 自动生成最新合角速度分析图片
                 try:
                     angle_data = extract_angular_velocity_data(session)
-                    time_labels = angle_data['time_labels']
-                    sensor_data = {
-                        'waist': angle_data['waist_data'],
-                        'shoulder': angle_data['shoulder_data'],
-                        'wrist': angle_data['wrist_data'],
-                        'racket': angle_data['racket_data']
-                    }
-                    # 只保留有数据的传感器
-                    sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
-                    if sensor_data and time_labels:
+                    if angle_data['sensor_groups']:
                         # 生成终止分析专用的图片文件名
                         stop_filename = f"stop_analysis_session_{session.id}_{analysis_result.id}.jpg"
-                        generate_multi_sensor_curve(sensor_data, time_labels, stop_filename, analysis_result)
-                        print(f"✅ 会话 {session.id} 分析图片生成成功")
+                        generate_multi_sensor_curve(angle_data, None, stop_filename, analysis_result)
+                        print(f"✅ 会话 {session.id} 合角速度分析图片生成成功")
                     else:
-                        print(f"⚠️ 会话 {session.id} 无有效数据生成图片")
+                        print(f"⚠️ 会话 {session.id} 无有效传感器数据生成图片")
                 except Exception as img_error:
                     print(f"⚠️ 会话 {session.id} 图片生成失败: {str(img_error)}")
                 
@@ -2244,25 +2136,16 @@ def esp32_mark_upload_complete(request):
                 analysis_id = analysis_result.id
                 error_msg = None
                 
-                # 自动生成最新分析图片
+                # 自动生成最新合角速度分析图片
                 try:
                     angle_data = extract_angular_velocity_data(session)
-                    time_labels = angle_data['time_labels']
-                    sensor_data = {
-                        'waist': angle_data['waist_data'],
-                        'shoulder': angle_data['shoulder_data'],
-                        'wrist': angle_data['wrist_data'],
-                        'racket': angle_data['racket_data']
-                    }
-                    # 只保留有数据的传感器
-                    sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
-                    if sensor_data and time_labels:
+                    if angle_data['sensor_groups']:
                         # 生成ESP32上传专用的图片文件名
                         esp32_filename = f"esp32_upload_session_{session.id}_{analysis_result.id}.jpg"
-                        generate_multi_sensor_curve(sensor_data, time_labels, esp32_filename, analysis_result)
-                        print(f"✅ ESP32会话 {session.id} 分析图片生成成功")
+                        generate_multi_sensor_curve(angle_data, None, esp32_filename, analysis_result)
+                        print(f"✅ ESP32会话 {session.id} 合角速度分析图片生成成功")
                     else:
-                        print(f"⚠️ ESP32会话 {session.id} 无有效数据生成图片")
+                        print(f"⚠️ ESP32会话 {session.id} 无有效传感器数据生成图片")
                 except Exception as img_error:
                     print(f"⚠️ ESP32会话 {session.id} 图片生成失败: {str(img_error)}")
                 
@@ -3273,22 +3156,38 @@ def debug_images(request):
         return JsonResponse({'error': 'GET or POST method required'}, status=405)
 
 def generate_test_image():
-    """生成测试图片"""
+    """生成测试合角速度图片"""
     try:
-        # 生成测试数据
+        # 生成测试数据，使用新格式
         time_points = list(range(0, 1000, 10))
         test_sensor_data = {
-            'waist': [abs(math.sin(t/100) * 2 + math.sin(t/50) * 1.5) for t in time_points],
-            'shoulder': [abs(math.sin((t-50)/100) * 2.5 + math.sin((t-50)/50) * 1.8) for t in time_points],
-            'wrist': [abs(math.sin((t-100)/100) * 3 + math.sin((t-100)/50) * 2) for t in time_points],
-            'racket': [abs(math.sin((t-150)/100) * 3.5 + math.sin((t-150)/50) * 2.5) for t in time_points]
+            'sensor_groups': {
+                'waist': {
+                    'times': [t/1000.0 for t in time_points],  # 转换为秒
+                    'gyro_magnitudes': [abs(math.sin(t/100) * 2 + math.sin(t/50) * 1.5) for t in time_points]
+                },
+                'shoulder': {
+                    'times': [t/1000.0 for t in time_points],
+                    'gyro_magnitudes': [abs(math.sin((t-50)/100) * 2.5 + math.sin((t-50)/50) * 1.8) for t in time_points]
+                },
+                'wrist': {
+                    'times': [t/1000.0 for t in time_points],
+                    'gyro_magnitudes': [abs(math.sin((t-100)/100) * 3 + math.sin((t-100)/50) * 2) for t in time_points]
+                },
+                'racket': {
+                    'times': [t/1000.0 for t in time_points],
+                    'gyro_magnitudes': [abs(math.sin((t-150)/100) * 3.5 + math.sin((t-150)/50) * 2.5) for t in time_points]
+                }
+            },
+            'master_start': 0,
+            'master_end': 1.0
         }
         
         # 生成图片
-        return generate_multi_sensor_curve(test_sensor_data, time_points, "test_analysis_curve.jpg")
+        return generate_multi_sensor_curve(test_sensor_data, None, "test_analysis_curve.jpg")
         
     except Exception as e:
-        print(f"测试图片生成失败: {str(e)}")
+        print(f"测试合角速度图片生成失败: {str(e)}")
         raise e
 
 @csrf_exempt
@@ -3425,22 +3324,12 @@ def miniprogram_get_images(request):
             # 如果没有找到图片，尝试生成一个
             if not found_images:
                 try:
-                    # 自动生成图片
+                    # 自动生成合角速度图片
                     angle_data = extract_angular_velocity_data(session)
-                    time_labels = angle_data['time_labels']
-                    sensor_data = {
-                        'waist': angle_data['waist_data'],
-                        'shoulder': angle_data['shoulder_data'],
-                        'wrist': angle_data['wrist_data'],
-                        'racket': angle_data['racket_data']
-                    }
                     
-                    # 只保留有数据的传感器
-                    sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
-                    
-                    if sensor_data and time_labels:
+                    if angle_data['sensor_groups']:
                         generated_filename = f'session_{session.id}_auto_generated.jpg'
-                        generated_path = generate_multi_sensor_curve(sensor_data, time_labels, generated_filename, analysis_result)
+                        generated_path = generate_multi_sensor_curve(angle_data, None, generated_filename, analysis_result)
                         
                         if generated_path and os.path.exists(generated_path):
                             file_size = os.path.getsize(generated_path)
@@ -3528,20 +3417,10 @@ def force_generate_image(request):
         try:
             session = DataCollectionSession.objects.get(id=session_id)
             
-            # 生成图片
+            # 生成合角速度图片
             angle_data = extract_angular_velocity_data(session)
-            time_labels = angle_data['time_labels']
-            sensor_data = {
-                'waist': angle_data['waist_data'],
-                'shoulder': angle_data['shoulder_data'], 
-                'wrist': angle_data['wrist_data'],
-                'racket': angle_data['racket_data']
-            }
             
-            # 只保留有数据的传感器
-            sensor_data = {k: v for k, v in sensor_data.items() if v and any(val != 0 for val in v)}
-            
-            if not sensor_data or not time_labels:
+            if not angle_data['sensor_groups']:
                 return JsonResponse({
                     'error': '该会话没有有效的传感器数据',
                     'session_id': session_id
@@ -3549,7 +3428,7 @@ def force_generate_image(request):
             
             # 生成图片
             filename = f'session_{session_id}_forced.jpg'
-            generated_path = generate_multi_sensor_curve(sensor_data, time_labels, filename)
+            generated_path = generate_multi_sensor_curve(angle_data, None, filename)
             
             if generated_path and os.path.exists(generated_path):
                 file_size = os.path.getsize(generated_path)

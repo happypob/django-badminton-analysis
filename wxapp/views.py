@@ -1136,30 +1136,42 @@ def get_sensor_peaks(request):
                 print(f"❌ 会话 {session_id} 没有传感器数据")
                 return JsonResponse({'error': 'No sensor data found for this session'}, status=404)
             
-            # 使用分析类计算峰值合角速度
-            analyzer = BadmintonAnalysis()
+            # 使用与图表生成相同的数据处理逻辑计算峰值
+            angle_data = extract_angular_velocity_data(session)
             
-            # 预处理数据
-            waist, shoulder, wrist = analyzer.preprocess_data(sensor_data)
+            # 从处理后的数据中计算最大角速度
+            max_angular_velocity = {}
             
-            # 计算峰值合角速度
-            peak_angular_velocity = analyzer.calculate_peak_angular_velocity(waist, shoulder, wrist)
+            for sensor_type, sensor_data in angle_data.get('sensor_groups', {}).items():
+                if 'gyro_magnitudes' in sensor_data and sensor_data['gyro_magnitudes']:
+                    max_velocity = max(sensor_data['gyro_magnitudes'])
+                    max_angular_velocity[f'{sensor_type}_max'] = float(max_velocity)
+                else:
+                    max_angular_velocity[f'{sensor_type}_max'] = 0.0
+            
+            # 确保所有传感器都有最大角速度数据
+            if 'waist_max' not in max_angular_velocity:
+                max_angular_velocity['waist_max'] = 0.0
+            if 'shoulder_max' not in max_angular_velocity:
+                max_angular_velocity['shoulder_max'] = 0.0
+            if 'wrist_max' not in max_angular_velocity:
+                max_angular_velocity['wrist_max'] = 0.0
             
             # 返回前端期望的格式
             return JsonResponse({
-                'msg': 'sensor peaks data',
-                'waist_peak': peak_angular_velocity.get('waist_peak', 0.0),
-                'shoulder_peak': peak_angular_velocity.get('shoulder_peak', 0.0),
-                'wrist_peak': peak_angular_velocity.get('wrist_peak', 0.0),
-                'peaks': {
-                    'waist': peak_angular_velocity.get('waist_peak', 0.0),
-                    'shoulder': peak_angular_velocity.get('shoulder_peak', 0.0),
-                    'wrist': peak_angular_velocity.get('wrist_peak', 0.0)
+                'msg': 'sensor max angular velocity data',
+                'waist_max': max_angular_velocity.get('waist_max', 0.0),
+                'shoulder_max': max_angular_velocity.get('shoulder_max', 0.0),
+                'wrist_max': max_angular_velocity.get('wrist_max', 0.0),
+                'max_velocities': {
+                    'waist': max_angular_velocity.get('waist_max', 0.0),
+                    'shoulder': max_angular_velocity.get('shoulder_max', 0.0),
+                    'wrist': max_angular_velocity.get('wrist_max', 0.0)
                 },
                 'data': [
-                    peak_angular_velocity.get('waist_peak', 0.0),
-                    peak_angular_velocity.get('shoulder_peak', 0.0),
-                    peak_angular_velocity.get('wrist_peak', 0.0)
+                    max_angular_velocity.get('waist_max', 0.0),
+                    max_angular_velocity.get('shoulder_max', 0.0),
+                    max_angular_velocity.get('wrist_max', 0.0)
                 ],
                 'session_info': {
                     'session_id': session.id,
@@ -1368,15 +1380,10 @@ def extract_angular_velocity_data(session):
                 sensor_groups[sensor_type] = []
             sensor_groups[sensor_type].append(data)
         
-        print(f"📊 传感器数据统计 (会话 {session.id}):")
-        for sensor_type, data_list in sensor_groups.items():
-            print(f"   {sensor_type}传感器: {len(data_list)} 条记录")
         
         # 完全按照analyze_sensor_csv.py的逻辑处理数据
         # 1. 首先收集所有数据并计算时间戳
         all_data = []
-        debug_count = 0
-        print(f"🔍 开始处理 {len(all_sensor_data)} 条传感器数据...")
         
         for data in all_sensor_data:
             try:
@@ -1407,11 +1414,9 @@ def extract_angular_velocity_data(session):
                             # 计算从当天0点开始的秒数（与CSV脚本完全一致）
                             time_s = hh * 3600 + mm * 60 + ss + mmm / 1000.0
                             timestamp_source = "JSON_HHMMSSMMM"
-                            print(f"   ✅ 使用JSON时间戳: {json_timestamp} -> {hh:02d}:{mm:02d}:{ss:02d}.{mmm:03d} -> {time_s:.3f}s")
                         else:
                             raise ValueError("不是9位数字格式")
                     except Exception as e:
-                        print(f"   ❌ JSON时间戳解析失败: {e}")
                         json_timestamp = None
                 
                 # 如果JSON时间戳解析失败，回退到ESP32时间戳
@@ -1423,7 +1428,6 @@ def extract_angular_velocity_data(session):
                     midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
                     time_s = time_s - midnight.timestamp()
                     timestamp_source = "ESP32"
-                    print(f"   ⚠️ 回退到ESP32时间戳: {time_s:.3f}s")
                 
                 # 最后回退到服务器时间戳
                 if json_timestamp is None and not data.esp32_timestamp:
@@ -1434,24 +1438,7 @@ def extract_angular_velocity_data(session):
                     midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
                     time_s = time_s - midnight.timestamp()
                     timestamp_source = "服务器"
-                    print(f"   ⚠️ 回退到服务器时间戳: {time_s:.3f}s")
                 
-                # 添加详细调试信息（只显示前10条和后10条）
-                if debug_count < 10 or debug_count >= len(all_sensor_data) - 10:
-                    print(f"📊 数据 {debug_count}: {data.sensor_type}")
-                    print(f"   原始JSON数据: {data.data}")
-                    print(f"   Gyro原始数据: {gyro}")
-                    print(f"   Gyro数组: {gyro_array}")
-                    print(f"   合角速度: {gyro_magnitude:.3f} deg/s")
-                    print(f"   时间戳来源: {timestamp_source}")
-                    if data.esp32_timestamp:
-                        print(f"   ESP32时间戳: {data.esp32_timestamp}")
-                        print(f"   ESP32时间戳类型: {type(data.esp32_timestamp)}")
-                    else:
-                        print(f"   服务器时间戳: {data.timestamp}")
-                        print(f"   服务器时间戳类型: {type(data.timestamp)}")
-                    print(f"   计算后时间: {time_s:.3f} 秒")
-                    print(f"   ---")
                 
                 all_data.append({
                     'sensor_type': data.sensor_type,
@@ -1459,10 +1446,8 @@ def extract_angular_velocity_data(session):
                     'gyro_magnitude': gyro_magnitude,
                     'data': data
                 })
-                debug_count += 1
                 
-            except (json.JSONDecodeError, KeyError, AttributeError, TypeError, ValueError) as e:
-                print(f"❌ 数据处理错误: {e}")
+            except (json.JSONDecodeError, KeyError, AttributeError, TypeError, ValueError):
                 continue
         
         # 2. 按时间排序（完全按照analyze_sensor_csv.py第137行）
@@ -1480,27 +1465,6 @@ def extract_angular_velocity_data(session):
             processed_sensor_groups[sensor_type]['times'].append(item['time_s'])
             processed_sensor_groups[sensor_type]['gyro_magnitudes'].append(item['gyro_magnitude'])
         
-        # 打印处理结果
-        print(f"🔍 数据处理完成，共 {len(all_data)} 条数据")
-        for sensor_type, sensor_data in processed_sensor_groups.items():
-            times = sensor_data['times']
-            gyro_magnitudes = sensor_data['gyro_magnitudes']
-            if times and gyro_magnitudes:
-                print(f"✅ {sensor_type}: {len(times)} 个数据点")
-                print(f"   时间范围: {min(times):.3f} - {max(times):.3f} 秒")
-                print(f"   角速度范围: {min(gyro_magnitudes):.3f} - {max(gyro_magnitudes):.3f} deg/s")
-                print(f"   最大角速度: {max(gyro_magnitudes):.3f} deg/s")
-                print(f"   平均角速度: {sum(gyro_magnitudes)/len(gyro_magnitudes):.3f} deg/s")
-                
-                # 显示前5个和后5个数据点
-                print(f"   前5个数据点:")
-                for i in range(min(5, len(times))):
-                    print(f"     [{i}] 时间: {times[i]:.3f}s, 角速度: {gyro_magnitudes[i]:.3f} deg/s")
-                if len(times) > 5:
-                    print(f"   后5个数据点:")
-                    for i in range(max(0, len(times)-5), len(times)):
-                        print(f"     [{i}] 时间: {times[i]:.3f}s, 角速度: {gyro_magnitudes[i]:.3f} deg/s")
-                print(f"   ---")
         
         if not processed_sensor_groups:
             return {
@@ -1527,8 +1491,6 @@ def extract_angular_velocity_data(session):
         master_start = float(min(starts))
         master_end = float(max(ends))
         
-        print(f"📏 联合时间窗口: {master_start:.3f} - {master_end:.3f} 秒")
-        print(f"   时间跨度: {master_end - master_start:.3f} 秒")
         
         # 按照analyze_sensor_csv.py的逻辑：为每个传感器生成相对于master_start的时间轴
         # 第154-156行：Trim each sensor group's data to the union window
@@ -1546,10 +1508,6 @@ def extract_angular_velocity_data(session):
                 'gyro_magnitudes': gyro_magnitudes
             }
             
-            print(f"🔧 {sensor_type} 对齐后: {len(relative_times)} 个数据点")
-            print(f"   时间范围: {min(relative_times):.3f} - {max(relative_times):.3f} 秒")
-            if gyro_magnitudes:
-                print(f"   角速度范围: {min(gyro_magnitudes):.3f} - {max(gyro_magnitudes):.3f} deg/s")
         
         return {
             'time_labels': [],  # 不再使用统一时间轴，让每个传感器使用自己的时间轴
@@ -1978,26 +1936,15 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
             print(f"⚠️ 中文字体设置失败: {str(_fe)}")
             plt.rcParams['axes.unicode_minus'] = False
         
-        # 绘制每个传感器的合角速度曲线（完全按照analyze_sensor_csv.py第168-178行）
-        print(f"🎨 开始绘制合角速度曲线，传感器数量: {len(sensor_groups)}")
-        print(f"🔍 图表绘制调试信息:")
-        print(f"   master_start: {master_start:.3f}")
-        if 'master_end' in locals():
-            print(f"   master_end: {master_end:.3f}")
-            print(f"   时间跨度: {master_end - master_start:.3f} 秒")
-        else:
-            print(f"   master_end: 未定义")
-        
+        # 绘制每个传感器的合角速度曲线
         for sensor_type, sensor_data in sensor_groups.items():
             if not sensor_data or 'times' not in sensor_data or 'gyro_magnitudes' not in sensor_data:
-                print(f"⚠️ {sensor_type} 传感器数据不完整，跳过")
                 continue
                 
             times = sensor_data['times']
             gyro_magnitudes = sensor_data['gyro_magnitudes']
             
             if not times or not gyro_magnitudes:
-                print(f"⚠️ {sensor_type} 传感器无有效数据，跳过")
                 continue
             
             # 确保时间轴和数据长度一致
@@ -2005,29 +1952,9 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
                 min_len = min(len(times), len(gyro_magnitudes))
                 times = times[:min_len]
                 gyro_magnitudes = gyro_magnitudes[:min_len]
-                print(f"⚠️ {sensor_type} 数据长度不匹配，使用较短长度: {min_len}")
             
-            # 详细调试信息
-            print(f"📊 {sensor_type} 传感器绘制数据:")
-            print(f"   数据点数量: {len(times)}")
-            print(f"   时间范围: {min(times):.3f} - {max(times):.3f} 秒")
-            print(f"   角速度范围: {min(gyro_magnitudes):.3f} - {max(gyro_magnitudes):.3f} deg/s")
-            print(f"   最大角速度: {max(gyro_magnitudes):.3f} deg/s")
-            print(f"   平均角速度: {sum(gyro_magnitudes)/len(gyro_magnitudes):.3f} deg/s")
-            
-            # 显示前3个和后3个数据点用于调试
-            print(f"   前3个数据点:")
-            for i in range(min(3, len(times))):
-                print(f"     [{i}] 时间: {times[i]:.3f}s, 角速度: {gyro_magnitudes[i]:.3f} deg/s")
-            if len(times) > 3:
-                print(f"   后3个数据点:")
-                for i in range(max(0, len(times)-3), len(times)):
-                    print(f"     [{i}] 时间: {times[i]:.3f}s, 角速度: {gyro_magnitudes[i]:.3f} deg/s")
-            
-            # 绘制合角速度曲线（完全按照CSV第171行：plt.plot(df_s["time_s"] - master_start, df_s["gyro_mag"], label=f"ID{sid}")）
+            # 绘制合角速度曲线
             plt.plot(times, gyro_magnitudes, label=f"ID{sensor_type}", linewidth=2)
-            print(f"✅ {sensor_type} 合角速度曲线绘制成功")
-            print(f"   ---")
         
         # 完全按照CSV第172-175行设置图表
         plt.xlabel("time (s) from master start")

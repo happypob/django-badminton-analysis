@@ -1111,7 +1111,7 @@ def get_latest_session(request):
 
 @csrf_exempt
 def get_sensor_peaks(request):
-    """获取三个传感器的峰值合角速度"""
+    """获取传感器的峰值合角速度，支持1-4个传感器数量"""
     if request.method == 'GET':
         session_id = request.GET.get('session_id')
         
@@ -1141,45 +1141,155 @@ def get_sensor_peaks(request):
             
             # 从处理后的数据中计算最大角速度
             max_angular_velocity = {}
+            sensor_types = []
             
-            for sensor_type, sensor_data in angle_data.get('sensor_groups', {}).items():
-                if 'gyro_magnitudes' in sensor_data and sensor_data['gyro_magnitudes']:
-                    max_velocity = max(sensor_data['gyro_magnitudes'])
+            for sensor_type, sensor_data_dict in angle_data.get('sensor_groups', {}).items():
+                sensor_types.append(sensor_type)
+                if 'gyro_magnitudes' in sensor_data_dict and sensor_data_dict['gyro_magnitudes']:
+                    max_velocity = max(sensor_data_dict['gyro_magnitudes'])
                     max_angular_velocity[f'{sensor_type}_max'] = float(max_velocity)
                 else:
                     max_angular_velocity[f'{sensor_type}_max'] = 0.0
             
-            # 确保所有传感器都有最大角速度数据
-            if 'waist_max' not in max_angular_velocity:
-                max_angular_velocity['waist_max'] = 0.0
-            if 'shoulder_max' not in max_angular_velocity:
-                max_angular_velocity['shoulder_max'] = 0.0
-            if 'wrist_max' not in max_angular_velocity:
-                max_angular_velocity['wrist_max'] = 0.0
-            
-            # 返回前端期望的格式
-            return JsonResponse({
+            # 构建动态响应数据
+            response_data = {
                 'msg': 'sensor max angular velocity data',
-                'waist_max': max_angular_velocity.get('waist_max', 0.0),
-                'shoulder_max': max_angular_velocity.get('shoulder_max', 0.0),
-                'wrist_max': max_angular_velocity.get('wrist_max', 0.0),
-                'max_velocities': {
-                    'waist': max_angular_velocity.get('waist_max', 0.0),
-                    'shoulder': max_angular_velocity.get('shoulder_max', 0.0),
-                    'wrist': max_angular_velocity.get('wrist_max', 0.0)
-                },
-                'data': [
-                    max_angular_velocity.get('waist_max', 0.0),
-                    max_angular_velocity.get('shoulder_max', 0.0),
-                    max_angular_velocity.get('wrist_max', 0.0)
-                ],
+                'sensor_count': len(sensor_types),
+                'sensor_types': sensor_types,
+                'max_velocities': {},
+                'data': [],
                 'session_info': {
                     'session_id': session.id,
                     'start_time': session.start_time.isoformat(),
                     'end_time': session.end_time.isoformat() if session.end_time else None,
                     'status': session.status
                 }
-            })
+            }
+            
+            # 为每个传感器添加数据
+            for sensor_type in sensor_types:
+                max_key = f'{sensor_type}_max'
+                max_value = max_angular_velocity.get(max_key, 0.0)
+                response_data[max_key] = max_value
+                response_data['max_velocities'][sensor_type] = max_value
+                response_data['data'].append(max_value)
+            
+            # 为了向后兼容，保留原有的固定字段（如果存在对应传感器）
+            if 'waist' in sensor_types:
+                response_data['waist_max'] = max_angular_velocity.get('waist_max', 0.0)
+            if 'shoulder' in sensor_types:
+                response_data['shoulder_max'] = max_angular_velocity.get('shoulder_max', 0.0)
+            if 'wrist' in sensor_types:
+                response_data['wrist_max'] = max_angular_velocity.get('wrist_max', 0.0)
+            
+            return JsonResponse(response_data)
+            
+        except DataCollectionSession.DoesNotExist:
+            return JsonResponse({'error': 'Session not found'}, status=404)
+        except Exception as e:
+            return JsonResponse({'error': f'Analysis failed: {str(e)}'}, status=500)
+    
+    else:
+        return JsonResponse({'error': 'GET method required'}, status=405)
+
+@csrf_exempt
+def get_sensor_peak_timestamps(request):
+    """获取每个传感器最大值点的时间坐标（距离开始的时间）"""
+    if request.method == 'GET':
+        session_id = request.GET.get('session_id')
+        
+        if not session_id:
+            return JsonResponse({'error': 'session_id required'}, status=400)
+        
+        try:
+            session = DataCollectionSession.objects.get(id=session_id)
+            print(f"🔍 获取会话 {session_id} 的传感器峰值时间数据")
+            
+            # 获取该会话的所有传感器数据，优先按ESP32时间戳排序
+            esp32_data = SensorData.objects.filter(session=session, esp32_timestamp__isnull=False).order_by('esp32_timestamp')
+            if esp32_data.exists():
+                sensor_data = esp32_data
+                print(f"✅ 使用ESP32时间戳数据: {esp32_data.count()} 条记录")
+            else:
+                # 如果没有ESP32时间戳，回退到服务器时间戳
+                sensor_data = SensorData.objects.filter(session=session).order_by('timestamp')
+                print(f"✅ 使用服务器时间戳数据: {sensor_data.count()} 条记录")
+            
+            if not sensor_data.exists():
+                print(f"❌ 会话 {session_id} 没有传感器数据")
+                return JsonResponse({'error': 'No sensor data found for this session'}, status=404)
+            
+            # 使用与图表生成相同的数据处理逻辑计算峰值时间
+            angle_data = extract_angular_velocity_data(session)
+            
+            # 计算每个传感器最大值点的时间坐标
+            peak_timestamps = {}
+            sensor_types = []
+            session_start_time = None
+            
+            # 获取会话开始时间
+            if esp32_data.exists():
+                session_start_time = esp32_data.first().esp32_timestamp
+            else:
+                session_start_time = sensor_data.first().timestamp
+            
+            for sensor_type, sensor_data_dict in angle_data.get('sensor_groups', {}).items():
+                sensor_types.append(sensor_type)
+                if 'gyro_magnitudes' in sensor_data_dict and sensor_data_dict['gyro_magnitudes']:
+                    # 找到最大值的索引
+                    max_velocity = max(sensor_data_dict['gyro_magnitudes'])
+                    max_index = sensor_data_dict['gyro_magnitudes'].index(max_velocity)
+                    
+                    # 计算时间坐标（距离开始的时间，单位：秒）
+                    if 'timestamps' in sensor_data_dict and sensor_data_dict['timestamps']:
+                        # 使用实际时间戳计算
+                        peak_time = sensor_data_dict['timestamps'][max_index]
+                        if session_start_time:
+                            time_diff = (peak_time - session_start_time).total_seconds()
+                            peak_timestamps[f'{sensor_type}_peak_time'] = float(time_diff)
+                        else:
+                            peak_timestamps[f'{sensor_type}_peak_time'] = 0.0
+                    else:
+                        # 使用采样率计算（假设200Hz）
+                        fs = 60
+                        time_diff = max_index / fs
+                        peak_timestamps[f'{sensor_type}_peak_time'] = float(time_diff)
+                        print("WARNING:使用采样率计算")
+                else:
+                    peak_timestamps[f'{sensor_type}_peak_time'] = 0.0
+            
+            # 构建动态响应数据
+            response_data = {
+                'msg': 'sensor peak timestamps data',
+                'sensor_count': len(sensor_types),
+                'sensor_types': sensor_types,
+                'peak_timestamps': {},
+                'data': [],
+                'session_info': {
+                    'session_id': session.id,
+                    'start_time': session.start_time.isoformat(),
+                    'end_time': session.end_time.isoformat() if session.end_time else None,
+                    'status': session.status
+                }
+            }
+            
+            # 为每个传感器添加数据
+            for sensor_type in sensor_types:
+                peak_time_key = f'{sensor_type}_peak_time'
+                peak_time_value = peak_timestamps.get(peak_time_key, 0.0)
+                response_data[peak_time_key] = peak_time_value
+                response_data['peak_timestamps'][sensor_type] = peak_time_value
+                response_data['data'].append(peak_time_value)
+            
+            # 为了向后兼容，保留原有的固定字段（如果存在对应传感器）
+            if 'waist' in sensor_types:
+                response_data['waist_peak_time'] = peak_timestamps.get('waist_peak_time', 0.0)
+            if 'shoulder' in sensor_types:
+                response_data['shoulder_peak_time'] = peak_timestamps.get('shoulder_peak_time', 0.0)
+            if 'wrist' in sensor_types:
+                response_data['wrist_peak_time'] = peak_timestamps.get('wrist_peak_time', 0.0)
+            
+            return JsonResponse(response_data)
             
         except DataCollectionSession.DoesNotExist:
             return JsonResponse({'error': 'Session not found'}, status=404)

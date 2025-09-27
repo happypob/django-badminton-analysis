@@ -16,6 +16,7 @@ urlpatterns = [
     path('get_analysis/', views.get_analysis_result),
     path('get_latest_session/', views.get_latest_session),  # 新增：获取最新会话
     path('get_sensor_peaks/', views.get_sensor_peaks),  # 新增：获取传感器峰值合角速度
+    path('get_sensor_peak_timestamps/', views.get_sensor_peak_timestamps),  # 新增：获取传感器峰值时间坐标
     path('generate_report/', views.generate_analysis_report),
     path('upload_mat/', views.upload_mat_file),
     path('get_mat_analysis/', views.get_mat_analysis_result),

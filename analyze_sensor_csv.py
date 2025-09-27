@@ -154,10 +154,21 @@ def analyze_dataframe(raw_df, json_col_hint=None):
     for sid, df_s in sensor_groups.items():
         mask = (df_s["time_s"] >= master_start) & (df_s["time_s"] <= master_end)
         sensor_groups[sid] = df_s.loc[mask].reset_index(drop=True)
+    # 定义传感器固定颜色映射
+    sensor_colors = {
+        1: '#FF6384',    # 红色 - 腰部传感器
+        2: '#36A2EB',    # 蓝色 - 肩部传感器  
+        3: '#FFCE56',    # 黄色 - 腕部传感器
+        4: '#4BC0C0',    # 青色 - 球拍传感器
+        5: '#9966FF',    # 紫色 - 脚踝传感器
+    }
+    
     # Plot acc magnitude
     plt.figure(figsize=(10,4))
     for sid, df_s in sensor_groups.items():
-        plt.plot(df_s["time_s"] - master_start, df_s["acc_mag"], label=f"ID{sid}")
+        color = sensor_colors.get(sid, '#808080')  # 默认灰色
+        plt.plot(df_s["time_s"] - master_start, df_s["acc_mag"], 
+                label=f"ID{sid}", color=color, linewidth=2)
     plt.xlabel("time (s) from master start")
     plt.ylabel("acc magnitude")
     plt.title("Acceleration magnitude - all sensors (aligned to master window)")
@@ -168,7 +179,9 @@ def analyze_dataframe(raw_df, json_col_hint=None):
     # Plot gyro magnitude
     plt.figure(figsize=(10,4))
     for sid, df_s in sensor_groups.items():
-        plt.plot(df_s["time_s"] - master_start, df_s["gyro_mag"], label=f"ID{sid}")
+        color = sensor_colors.get(sid, '#808080')  # 默认灰色
+        plt.plot(df_s["time_s"] - master_start, df_s["gyro_mag"], 
+                label=f"ID{sid}", color=color, linewidth=2)
     plt.xlabel("time (s) from master start")
     plt.ylabel("gyro magnitude")
     plt.title("Gyro magnitude - all sensors (aligned to master window)")

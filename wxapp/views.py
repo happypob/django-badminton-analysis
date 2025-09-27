@@ -2077,6 +2077,15 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
             print(f"⚠️ 中文字体设置失败: {str(_fe)}")
             plt.rcParams['axes.unicode_minus'] = False
         
+        # 定义传感器固定颜色映射
+        sensor_colors = {
+            "waist": '#FF6384',    # 红色 - 腰部传感器
+            "shoulder": '#36A2EB', # 蓝色 - 肩部传感器  
+            "wrist": '#FFCE56',    # 黄色 - 腕部传感器
+            "racket": '#4BC0C0',   # 青色 - 球拍传感器
+            "ankle": '#9966FF',    # 紫色 - 脚踝传感器
+        }
+        
         # 绘制每个传感器的合角速度曲线
         for sensor_type, sensor_data in sensor_groups.items():
             if not sensor_data or 'times' not in sensor_data or 'gyro_magnitudes' not in sensor_data:
@@ -2094,8 +2103,12 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
                 times = times[:min_len]
                 gyro_magnitudes = gyro_magnitudes[:min_len]
             
+            # 获取传感器对应的固定颜色
+            color = sensor_colors.get(sensor_type, '#808080')  # 默认灰色
+            
             # 绘制合角速度曲线
-            plt.plot(times, gyro_magnitudes, label=f"ID{sensor_type}", linewidth=2)
+            plt.plot(times, gyro_magnitudes, label=f"ID{sensor_type}", 
+                    color=color, linewidth=2)
         
         # 完全按照CSV第172-175行设置图表
         plt.xlabel("time (s) from master start")

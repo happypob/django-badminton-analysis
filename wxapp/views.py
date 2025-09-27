@@ -1227,11 +1227,43 @@ def get_sensor_peak_timestamps(request):
             sensor_types = []
             session_start_time = None
             
-            # 获取会话开始时间
+            # 获取会话开始时间 - 优先使用ESP32时间戳
+            session_start_time = None
+            
+            # 首先尝试从ESP32数据中获取时间戳
             if esp32_data.exists():
                 session_start_time = esp32_data.first().esp32_timestamp
+                print(f"✅ 使用ESP32数据库时间戳作为会话开始时间: {session_start_time}")
             else:
-                session_start_time = sensor_data.first().timestamp
+                # 如果没有ESP32数据库时间戳，尝试从JSON数据中解析
+                first_data = sensor_data.first()
+                if first_data:
+                    try:
+                        import json
+                        first_data_dict = json.loads(first_data.data)
+                        if first_data_dict.get('timestamp') is not None:
+                            json_timestamp = first_data_dict.get('timestamp')
+                            s = str(int(json_timestamp)).zfill(9)
+                            if len(s) == 9 and s.isdigit():
+                                hh = int(s[0:2])
+                                mm = int(s[2:4])
+                                ss = int(s[4:6])
+                                mmm = int(s[6:9])
+                                
+                                # 构造完整的datetime对象
+                                from datetime import datetime, time
+                                from django.utils import timezone as tz
+                                today = datetime.now().date()
+                                esp32_time = datetime.combine(today, time(hh, mm, ss, mmm * 1000))
+                                session_start_time = tz.make_aware(esp32_time)
+                                print(f"✅ 使用ESP32 JSON时间戳作为会话开始时间: {json_timestamp} -> {session_start_time}")
+                    except Exception as e:
+                        print(f"⚠️ JSON时间戳解析失败: {e}")
+                
+                # 最后回退到服务器时间戳
+                if session_start_time is None:
+                    session_start_time = sensor_data.first().timestamp
+                    print(f"⚠️ 回退到服务器时间戳作为会话开始时间: {session_start_time}")
             
             for sensor_type, sensor_data_dict in angle_data.get('sensor_groups', {}).items():
                 sensor_types.append(sensor_type)
@@ -1241,20 +1273,17 @@ def get_sensor_peak_timestamps(request):
                     max_index = sensor_data_dict['gyro_magnitudes'].index(max_velocity)
                     
                     # 计算时间坐标（距离开始的时间，单位：秒）
-                    if 'timestamps' in sensor_data_dict and sensor_data_dict['timestamps']:
-                        # 使用实际时间戳计算
-                        peak_time = sensor_data_dict['timestamps'][max_index]
-                        if session_start_time:
-                            time_diff = (peak_time - session_start_time).total_seconds()
-                            peak_timestamps[f'{sensor_type}_peak_time'] = float(time_diff)
-                        else:
-                            peak_timestamps[f'{sensor_type}_peak_time'] = 0.0
+                    if 'times' in sensor_data_dict and sensor_data_dict['times']:
+                        # 使用实际时间戳计算（times字段包含相对于master_start的秒数）
+                        peak_time_seconds = sensor_data_dict['times'][max_index]
+                        peak_timestamps[f'{sensor_type}_peak_time'] = float(peak_time_seconds)
+                        print(f"✅ {sensor_type} 使用实际时间戳: {peak_time_seconds}秒")
                     else:
-                        # 使用采样率计算（假设200Hz）
+                        # 使用采样率计算（假设60Hz）
                         fs = 60
                         time_diff = max_index / fs
                         peak_timestamps[f'{sensor_type}_peak_time'] = float(time_diff)
-                        print("WARNING:使用采样率计算")
+                        print(f"⚠️ {sensor_type} 使用采样率计算: {time_diff}秒")
                 else:
                     peak_timestamps[f'{sensor_type}_peak_time'] = 0.0
             
@@ -1504,14 +1533,14 @@ def extract_angular_velocity_data(session):
                 gyro_array = np.array([gyro[0], gyro[1], gyro[2]], dtype=float)
                 gyro_magnitude = np.linalg.norm(gyro_array)
                 
-                # 计算时间戳 - 优先使用JSON数据中的timestamp字段
+                # 计算时间戳 - 优先使用JSON中的ESP32时间戳
                 timestamp_source = "未知"
                 time_s = 0
+                esp32_timestamp = None
                 
-                # 首先尝试从JSON数据中获取timestamp字段
-                json_timestamp = data_dict.get('timestamp')
-                if json_timestamp is not None:
-                    # 使用JSON中的timestamp字段，按照HHMMSSMMM格式解析
+                # 首先尝试从JSON数据中获取ESP32时间戳（最高优先级）
+                if data_dict.get('timestamp') is not None:
+                    json_timestamp = data_dict.get('timestamp')
                     try:
                         # 按照analyze_sensor_csv.py的parse_timestamp_hhmmssmmm函数逻辑
                         s = str(int(json_timestamp)).zfill(9)
@@ -1523,24 +1552,36 @@ def extract_angular_velocity_data(session):
                             
                             # 计算从当天0点开始的秒数（与CSV脚本完全一致）
                             time_s = hh * 3600 + mm * 60 + ss + mmm / 1000.0
-                            timestamp_source = "JSON_HHMMSSMMM"
+                            timestamp_source = "ESP32_JSON"
+                            print(f"✅ 使用ESP32 JSON时间戳: {json_timestamp} -> {time_s}秒")
+                            
+                            # 同时将解析出的时间戳存储到esp32_timestamp变量中，供后续使用
+                            from datetime import datetime, time
+                            from django.utils import timezone as tz
+                            # 构造完整的datetime对象
+                            today = datetime.now().date()
+                            esp32_time = datetime.combine(today, time(hh, mm, ss, mmm * 1000))
+                            esp32_timestamp = tz.make_aware(esp32_time)
                         else:
                             raise ValueError("不是9位数字格式")
                     except Exception as e:
+                        print(f"⚠️ JSON时间戳解析失败: {e}")
                         json_timestamp = None
                 
-                # 如果JSON时间戳解析失败，回退到ESP32时间戳
-                if json_timestamp is None and data.esp32_timestamp:
+                # 如果JSON时间戳解析失败，尝试使用数据库中的ESP32时间戳
+                if timestamp_source == "未知" and data.esp32_timestamp:
                     time_s = data.esp32_timestamp.timestamp()
                     from datetime import datetime
                     from django.utils import timezone as tz
                     base_date = data.esp32_timestamp.astimezone(tz.get_current_timezone()).date()
                     midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
                     time_s = time_s - midnight.timestamp()
-                    timestamp_source = "ESP32"
+                    timestamp_source = "ESP32_DB"
+                    esp32_timestamp = data.esp32_timestamp
+                    print(f"✅ 使用ESP32数据库时间戳: {data.esp32_timestamp}")
                 
                 # 最后回退到服务器时间戳
-                if json_timestamp is None and not data.esp32_timestamp:
+                if timestamp_source == "未知":
                     time_s = data.timestamp.timestamp()
                     from datetime import datetime
                     from django.utils import timezone as tz
@@ -1548,6 +1589,7 @@ def extract_angular_velocity_data(session):
                     midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
                     time_s = time_s - midnight.timestamp()
                     timestamp_source = "服务器"
+                    print(f"⚠️ 回退到服务器时间戳: {data.timestamp}")
                 
                 
                 all_data.append({

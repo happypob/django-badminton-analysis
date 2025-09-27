@@ -612,29 +612,55 @@ def esp32_upload_sensor_data(request):
                     from datetime import datetime, timedelta
                     import re as _re
                     from django.utils import timezone as _tz
-                    # Helper: parse timestamp
+                    # Helper: parse timestamp - 完全按照analyze_sensor_csv.py的逻辑
                     def _parse_ts(ts_val, session_obj):
-                        # int/float -> unix ms
+                        # 优先处理HHMMSSMMM格式（与analyze_sensor_csv.py一致）
+                        if isinstance(ts_val, (int, float, str)):
+                            try:
+                                # 转换为字符串并补齐到9位
+                                s = str(int(float(ts_val))).zfill(9)
+                                # 检查是否为9位数字格式
+                                if len(s) == 9 and s.isdigit():
+                                    # 按照analyze_sensor_csv.py的parse_timestamp_hhmmssmmm函数逻辑
+                                    hh = int(s[0:2])
+                                    mm = int(s[2:4])
+                                    ss = int(s[4:6])
+                                    mmm = int(s[6:9])
+                                    
+                                    # 计算从当天0点开始的秒数（与CSV脚本完全一致）
+                                    seconds_from_midnight = hh * 3600 + mm * 60 + ss + mmm / 1000.0
+                                    
+                                    # 获取会话开始日期作为基准日期
+                                    if session_obj:
+                                        base_date = session_obj.start_time.astimezone(_tz.get_current_timezone()).date()
+                                    else:
+                                        base_date = _tz.now().date()
+                                    
+                                    # 创建datetime对象
+                                    dt_naive = datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss, mmm * 1000)
+                                    aware = _tz.make_aware(dt_naive, _tz.get_current_timezone())
+                                    
+                                    # 跨天修正：如果时间比会话开始早很多，则加一天
+                                    if session_obj and aware < session_obj.start_time - timedelta(hours=6):
+                                        aware = aware + timedelta(days=1)
+                                    
+                                    return aware
+                            except Exception:
+                                pass
+                        
+                        # 回退到原来的Unix时间戳处理
                         if isinstance(ts_val, (int, float)):
                             from datetime import timezone as _dt_tz
                             return datetime.fromtimestamp(ts_val / 1000.0, tz=_dt_tz.utc)
+                        
+                        # 回退到ISO格式处理
                         if isinstance(ts_val, str):
                             s = ts_val.strip()
-                            # ISO
                             try:
                                 return _tz.datetime.fromisoformat(s.replace('Z', '+00:00'))
                             except Exception:
                                 pass
-                            # HHMMSSmmm (9 digits)
-                            if _re.fullmatch(r"\d{9}", s):
-                                hh = int(s[0:2]); mm = int(s[2:4]); ss = int(s[4:6]); mmm = int(s[6:9])
-                                base_date = (session_obj.start_time.astimezone(_tz.get_current_timezone()) if session_obj else _tz.now()).date()
-                                dt_naive = datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss, mmm * 1000)
-                                aware = _tz.make_aware(dt_naive, _tz.get_current_timezone())
-                                # 跨天修正：若比会话开始早很多，则加一天
-                                if session_obj and aware < session_obj.start_time - timedelta(hours=6):
-                                    aware = aware + timedelta(days=1)
-                                return aware
+                        
                         return None
                     esp32_timestamp_dt = _parse_ts(timestamp, session)
                 except Exception:
@@ -1282,13 +1308,38 @@ def generate_detailed_report(analysis_result, session):
     
     return report
 
+def parse_timestamp_hhmmssmmm(ts):
+    """解析HHMMSSMMM格式时间戳，完全按照analyze_sensor_csv.py的逻辑"""
+    if ts is None or (isinstance(ts, float) and np.isnan(ts)):
+        return np.nan
+    s = str(int(ts))
+    s = s.zfill(9)
+    try:
+        hh = int(s[0:2])
+        mm = int(s[2:4])
+        ss = int(s[4:6])
+        mmm = int(s[6:9])
+    except Exception:
+        try:
+            return float(ts)
+        except Exception:
+            return np.nan
+    return hh * 3600 + mm * 60 + ss + mmm / 1000.0
+
 def extract_angular_velocity_data(session):
     """从会话数据中提取角速度数据用于图表显示，完全按照analyze_sensor_csv.py的逻辑"""
     try:
         import numpy as np
         
-        # 获取所有传感器数据，按sensor_type分组
-        all_sensor_data = SensorData.objects.filter(session=session).order_by('timestamp')
+        # 获取所有传感器数据，优先按ESP32时间戳排序
+        esp32_data = SensorData.objects.filter(session=session, esp32_timestamp__isnull=False).order_by('esp32_timestamp')
+        if esp32_data.exists():
+            all_sensor_data = esp32_data
+            print(f"✅ 使用ESP32时间戳数据: {esp32_data.count()} 条记录")
+        else:
+            # 如果没有ESP32时间戳，回退到服务器时间戳
+            all_sensor_data = SensorData.objects.filter(session=session).order_by('timestamp')
+            print(f"⚠️ 使用服务器时间戳数据: {all_sensor_data.count()} 条记录")
         
         if not all_sensor_data.exists():
             return {
@@ -1308,42 +1359,68 @@ def extract_angular_velocity_data(session):
         for sensor_type, data_list in sensor_groups.items():
             print(f"   {sensor_type}传感器: {len(data_list)} 条记录")
         
-        # 为每个传感器提取数据并计算合角速度（完全按照analyze_sensor_csv.py的逻辑）
+        # 完全按照analyze_sensor_csv.py的逻辑处理数据
+        # 1. 首先收集所有数据并计算时间戳
+        all_data = []
+        for data in all_sensor_data:
+            try:
+                data_dict = json.loads(data.data)
+                gyro = data_dict.get('gyro', [0, 0, 0])
+                
+                # 按照analyze_sensor_csv.py的magnitude函数逻辑计算合角速度
+                gyro_array = np.array([gyro[0], gyro[1], gyro[2]], dtype=float)
+                gyro_magnitude = np.linalg.norm(gyro_array)
+                
+                # 计算时间戳 - 完全按照analyze_sensor_csv.py的逻辑
+                if data.esp32_timestamp:
+                    # 使用ESP32时间戳，转换为从当天0点开始的秒数
+                    time_s = data.esp32_timestamp.timestamp()
+                    from datetime import datetime
+                    from django.utils import timezone as tz
+                    base_date = data.esp32_timestamp.astimezone(tz.get_current_timezone()).date()
+                    midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
+                    time_s = time_s - midnight.timestamp()
+                else:
+                    # 回退到服务器时间戳
+                    time_s = data.timestamp.timestamp()
+                    from datetime import datetime
+                    from django.utils import timezone as tz
+                    base_date = data.timestamp.astimezone(tz.get_current_timezone()).date()
+                    midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
+                    time_s = time_s - midnight.timestamp()
+                
+                all_data.append({
+                    'sensor_type': data.sensor_type,
+                    'time_s': time_s,
+                    'gyro_magnitude': gyro_magnitude,
+                    'data': data
+                })
+            except (json.JSONDecodeError, KeyError, AttributeError, TypeError, ValueError):
+                continue
+        
+        # 2. 按时间排序（完全按照analyze_sensor_csv.py第137行）
+        all_data.sort(key=lambda x: x['time_s'])
+        
+        # 3. 按传感器类型分组（完全按照analyze_sensor_csv.py第141行）
         processed_sensor_groups = {}
-        for sensor_type, data_list in sensor_groups.items():
-            times = []
-            gyro_magnitudes = []
-            
-            for data in data_list:
-                try:
-                    data_dict = json.loads(data.data)
-                    gyro = data_dict.get('gyro', [0, 0, 0])
-                    
-                    # 按照analyze_sensor_csv.py的magnitude函数逻辑计算合角速度
-                    # magnitude函数: np.linalg.norm(arr, axis=1)
-                    gyro_array = np.array([gyro[0], gyro[1], gyro[2]], dtype=float)
-                    gyro_magnitude = np.linalg.norm(gyro_array)
-                    
-                    # 转换为度每秒 (rad/s -> deg/s)
-                    gyro_magnitude_deg = gyro_magnitude * 180.0 / np.pi
-                    
-                    # 使用时间戳作为时间轴
-                    if data.esp32_timestamp:
-                        time_s = data.esp32_timestamp.timestamp()
-                    else:
-                        time_s = data.timestamp.timestamp()
-                    
-                    times.append(time_s)
-                    gyro_magnitudes.append(gyro_magnitude_deg)
-                except (json.JSONDecodeError, KeyError, AttributeError, TypeError, ValueError):
-                    continue
-            
-            if times and gyro_magnitudes:
+        for item in all_data:
+            sensor_type = item['sensor_type']
+            if sensor_type not in processed_sensor_groups:
                 processed_sensor_groups[sensor_type] = {
-                    'times': times,
-                    'gyro_magnitudes': gyro_magnitudes
+                    'times': [],
+                    'gyro_magnitudes': []
                 }
+            processed_sensor_groups[sensor_type]['times'].append(item['time_s'])
+            processed_sensor_groups[sensor_type]['gyro_magnitudes'].append(item['gyro_magnitude'])
+        
+        # 打印处理结果
+        for sensor_type, sensor_data in processed_sensor_groups.items():
+            times = sensor_data['times']
+            gyro_magnitudes = sensor_data['gyro_magnitudes']
+            if times and gyro_magnitudes:
                 print(f"✅ {sensor_type}: {len(times)} 个数据点")
+                print(f"   时间范围: {min(times):.3f} - {max(times):.3f} 秒")
+                print(f"   角速度范围: {min(gyro_magnitudes):.3f} - {max(gyro_magnitudes):.3f} deg/s")
         
         if not processed_sensor_groups:
             return {

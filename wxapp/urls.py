@@ -14,6 +14,7 @@ urlpatterns = [
     path('notify_esp32_stop/', views.notify_esp32_stop),
     path('test_udp_broadcast/', views.test_udp_broadcast),  # 现在使用WebSocket而非UDP
     path('get_analysis/', views.get_analysis_result),
+    path('get_latest_session/', views.get_latest_session),  # 新增：获取最新会话
     path('get_sensor_peaks/', views.get_sensor_peaks),  # 新增：获取传感器峰值合角速度
     path('generate_report/', views.generate_analysis_report),
     path('upload_mat/', views.upload_mat_file),

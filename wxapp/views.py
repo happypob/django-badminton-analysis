@@ -995,6 +995,39 @@ def get_analysis_result(request):
 
 # 新增接口：生成详细分析报告
 @csrf_exempt
+def get_latest_session(request):
+    """获取最新的数据收集会话"""
+    if request.method == 'GET':
+        try:
+            # 获取最新的会话
+            latest_session = DataCollectionSession.objects.order_by('-start_time').first()
+            
+            if not latest_session:
+                return JsonResponse({
+                    'error': 'No sessions found',
+                    'message': '暂无数据收集会话'
+                }, status=404)
+            
+            return JsonResponse({
+                'success': True,
+                'session': {
+                    'id': latest_session.id,
+                    'status': latest_session.status,
+                    'start_time': latest_session.start_time.isoformat(),
+                    'end_time': latest_session.end_time.isoformat() if latest_session.end_time else None,
+                    'wx_user_id': latest_session.wx_user_id
+                }
+            })
+            
+        except Exception as e:
+            return JsonResponse({
+                'error': f'Failed to get latest session: {str(e)}'
+            }, status=500)
+    
+    else:
+        return JsonResponse({'error': 'GET method required'}, status=405)
+
+@csrf_exempt
 def get_sensor_peaks(request):
     """获取三个传感器的峰值合角速度"""
     if request.method == 'GET':
@@ -1005,16 +1038,20 @@ def get_sensor_peaks(request):
         
         try:
             session = DataCollectionSession.objects.get(id=session_id)
+            print(f"🔍 获取会话 {session_id} 的传感器峰值数据")
             
             # 获取该会话的所有传感器数据，优先按ESP32时间戳排序
             esp32_data = SensorData.objects.filter(session=session, esp32_timestamp__isnull=False).order_by('esp32_timestamp')
             if esp32_data.exists():
                 sensor_data = esp32_data
+                print(f"✅ 使用ESP32时间戳数据: {esp32_data.count()} 条记录")
             else:
                 # 如果没有ESP32时间戳，回退到服务器时间戳
                 sensor_data = SensorData.objects.filter(session=session).order_by('timestamp')
+                print(f"✅ 使用服务器时间戳数据: {sensor_data.count()} 条记录")
             
             if not sensor_data.exists():
+                print(f"❌ 会话 {session_id} 没有传感器数据")
                 return JsonResponse({'error': 'No sensor data found for this session'}, status=404)
             
             # 使用分析类计算峰值合角速度

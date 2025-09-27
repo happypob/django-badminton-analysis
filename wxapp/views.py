@@ -1139,7 +1139,7 @@ def generate_detailed_report(analysis_result, session):
     return report
 
 def extract_angular_velocity_data(session):
-    """从会话数据中提取角速度数据用于图表显示，按照analyze_sensor_csv.py的逻辑"""
+    """从会话数据中提取角速度数据用于图表显示，完全按照analyze_sensor_csv.py的逻辑"""
     try:
         import numpy as np
         
@@ -1164,19 +1164,31 @@ def extract_angular_velocity_data(session):
         for sensor_type, data_list in sensor_groups.items():
             print(f"   {sensor_type}传感器: {len(data_list)} 条记录")
         
-        # 提取角速度数据并计算合角速度
-        def extract_gyro_magnitude(sensor_data_list):
-            """提取角速度数据并计算合角速度（幅值）"""
+        # 为每个传感器提取数据并计算合角速度
+        processed_sensor_groups = {}
+        for sensor_type, data_list in sensor_groups.items():
             times = []
             gyro_magnitudes = []
             
-            for data in sensor_data_list:
+            for data in data_list:
                 try:
                     data_dict = json.loads(data.data)
-                    gyro = data_dict.get('gyro', [0, 0, 0])
+                    gyro = data_dict.get('gyro', None)
+                    
+                    # 检查gyro数据是否有效
+                    if gyro is None or len(gyro) != 3:
+                    continue
+            
+                    # 检查gyro数据是否为零或异常值
+                    if all(abs(x) < 1e-6 for x in gyro):
+                        continue  # 跳过零值数据
                     
                     # 计算合角速度（幅值）- 按照analyze_sensor_csv.py的magnitude函数逻辑
                     gyro_magnitude = np.sqrt(gyro[0]**2 + gyro[1]**2 + gyro[2]**2)
+                    
+                    # 过滤异常值（合角速度过大或过小）
+                    if gyro_magnitude < 1e-6 or gyro_magnitude > 1000:  # 过滤掉异常值
+                        continue
                     
                     # 使用时间戳作为时间轴
                     if data.esp32_timestamp:
@@ -1186,21 +1198,82 @@ def extract_angular_velocity_data(session):
                     
                     times.append(time_s)
                     gyro_magnitudes.append(gyro_magnitude)
-                except (json.JSONDecodeError, KeyError, AttributeError):
+                except (json.JSONDecodeError, KeyError, AttributeError, TypeError, ValueError):
                     continue
             
-            return times, gyro_magnitudes
-        
-        # 为每个传感器提取数据
-        processed_sensor_groups = {}
-        for sensor_type, data_list in sensor_groups.items():
-            times, gyro_magnitudes = extract_gyro_magnitude(data_list)
             if times and gyro_magnitudes:
-                processed_sensor_groups[sensor_type] = {
-                    'times': times,
-                    'gyro_magnitudes': gyro_magnitudes
-                }
-                print(f"✅ {sensor_type}: {len(times)} 个数据点")
+                # 进一步过滤：移除微斜的恒定值段和噪声
+                filtered_times = []
+                filtered_gyro_magnitudes = []
+                
+                # 计算数据的变化程度
+                gyro_array = np.array(gyro_magnitudes)
+                if len(gyro_array) > 1:
+                    # 计算标准差来判断数据变化程度
+                    std_dev = np.std(gyro_array)
+                    mean_val = np.mean(gyro_array)
+                    
+                    # 如果标准差太小，说明数据几乎恒定，需要更严格的过滤
+                    if std_dev < 0.01:  # 标准差小于0.01，认为是几乎恒定的
+                        print(f"⚠️ {sensor_type}: 数据变化太小 (std={std_dev:.6f})，应用严格过滤")
+                        threshold = 0.001  # 更严格的阈值
+                    else:
+                        threshold = 0.01  # 正常阈值
+                    
+                    # 使用滑动窗口检测恒定段
+                    window_size = min(10, len(gyro_array) // 10)  # 动态窗口大小
+                    if window_size < 3:
+                        window_size = 3
+                    
+                    for i, (t, g) in enumerate(zip(times, gyro_magnitudes)):
+                        # 如果是第一个点，直接添加
+                        if i == 0:
+                            filtered_times.append(t)
+                            filtered_gyro_magnitudes.append(g)
+                            continue
+                        
+                        # 检查是否与前面的值有显著差异
+                        prev_g = filtered_gyro_magnitudes[-1]
+                        if abs(g - prev_g) > threshold:
+                            filtered_times.append(t)
+                            filtered_gyro_magnitudes.append(g)
+                        else:
+                            # 检查是否在恒定段中
+                            if i >= window_size:
+                                # 检查当前窗口内的变化
+                                window_start = max(0, i - window_size)
+                                window_data = gyro_array[window_start:i+1]
+                                window_std = np.std(window_data)
+                                
+                                # 如果窗口内变化很小，跳过这个点
+                                if window_std < threshold:
+                                    continue
+                                else:
+                                    filtered_times.append(t)
+                                    filtered_gyro_magnitudes.append(g)
+                            else:
+                                # 窗口太小，使用简单阈值
+                                if abs(g - prev_g) > threshold * 2:  # 更严格的阈值
+                                    filtered_times.append(t)
+                                    filtered_gyro_magnitudes.append(g)
+                else:
+                    # 数据点太少，直接使用原始数据
+                    filtered_times = times
+                    filtered_gyro_magnitudes = gyro_magnitudes
+                
+                # 最终检查：确保有足够的变化
+                if len(filtered_times) > 1:
+                    final_std = np.std(filtered_gyro_magnitudes)
+                    if final_std > 0.001:  # 最终标准差检查
+                        processed_sensor_groups[sensor_type] = {
+                            'times': filtered_times,
+                            'gyro_magnitudes': filtered_gyro_magnitudes
+                        }
+                        print(f"✅ {sensor_type}: {len(filtered_times)} 个有效数据点 (原始: {len(times)}, 最终std: {final_std:.6f})")
+                    else:
+                        print(f"⚠️ {sensor_type}: 过滤后数据变化仍不足 (std={final_std:.6f})，跳过")
+                else:
+                    print(f"⚠️ {sensor_type}: 数据点变化不足，跳过")
         
         if not processed_sensor_groups:
             return {
@@ -1225,13 +1298,14 @@ def extract_angular_velocity_data(session):
         print(f"📏 联合时间窗口: {master_start:.3f} - {master_end:.3f} 秒")
         print(f"   时间跨度: {master_end - master_start:.3f} 秒")
         
-        # 为每个传感器生成相对于master_start的时间轴和对应的角速度数据
+        # 按照analyze_sensor_csv.py的逻辑：为每个传感器生成相对于master_start的时间轴
+        # 不进行插值，直接使用原始数据点
         aligned_sensor_data = {}
         for sensor_type, sensor_data in processed_sensor_groups.items():
             times = sensor_data['times']
             gyro_magnitudes = sensor_data['gyro_magnitudes']
             
-            # 转换为相对于master_start的时间（秒）
+            # 转换为相对于master_start的时间（秒），完全按照CSV逻辑
             relative_times = [t - master_start for t in times]
             
             aligned_sensor_data[sensor_type] = {
@@ -1685,8 +1759,8 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
             if not times or not gyro_magnitudes:
                 print(f"⚠️ {sensor_type} 传感器无有效数据，跳过")
                 continue
-            
-            # 确保时间轴和数据长度一致
+                
+                # 确保时间轴和数据长度一致
             if len(times) != len(gyro_magnitudes):
                 min_len = min(len(times), len(gyro_magnitudes))
                 times = times[:min_len]

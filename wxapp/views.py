@@ -1577,7 +1577,8 @@ def extract_angular_velocity_data(session):
                     timestamp_source = "ESP32"
                     # 只显示前几条的调试信息
                     if len(all_data) < 5:
-                        print(f"✅ 使用ESP32时间戳: {data.esp32_timestamp} -> {time_s}秒")
+                        print(f"✅ 读取ESP32时间戳: {data.esp32_timestamp} -> {time_s}秒")
+                        print(f"   数据ID: {data.id}, 传感器类型: {data.sensor_type}")
                 else:
                     print(f"❌ 数据点缺少ESP32时间戳，跳过: {data.id}")
                     continue

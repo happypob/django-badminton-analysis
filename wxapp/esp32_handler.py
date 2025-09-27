@@ -230,10 +230,8 @@ class ESP32DataHandler:
                 actual_sensor_id = data_item.get('sensor_id')
                 if actual_sensor_id is not None:
                     actual_sensor_type = SENSOR_ID_MAPPING.get(actual_sensor_id, 'unknown')
-                    #print(f"🔧 数据项{i}: sensor_id={actual_sensor_id} → sensor_type={actual_sensor_type} (原始type={sensor_type})")
                 else:
                     actual_sensor_type = sensor_type  # 回退到原始类型
-                    print(f"⚠️ 数据项{i}: 无sensor_id，使用原始类型={sensor_type}")
                 
                 # 处理ESP32时间戳 - 只使用HHMMSSMMM格式
                 esp32_timestamp = None
@@ -282,7 +280,10 @@ class ESP32DataHandler:
                 
                 # 只显示前几条的存储信息
                 if i < 3:
-                    print(f"  ✅ 数据存储成功: ID={sensor_data_obj.id}, ESP32时间戳={sensor_data_obj.esp32_timestamp}")
+                    print(f"  ✅ 数据存储成功: ID={sensor_data_obj.id}")
+                    print(f"    存储的ESP32时间戳: {sensor_data_obj.esp32_timestamp}")
+                    print(f"    服务器时间戳: {sensor_data_obj.timestamp}")
+                    print(f"    数据库esp32_timestamp字段: {sensor_data_obj.esp32_timestamp}")
                 
                 results.append({
                     'index': i,

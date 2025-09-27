@@ -230,7 +230,7 @@ class ESP32DataHandler:
                 actual_sensor_id = data_item.get('sensor_id')
                 if actual_sensor_id is not None:
                     actual_sensor_type = SENSOR_ID_MAPPING.get(actual_sensor_id, 'unknown')
-                    print(f"🔧 数据项{i}: sensor_id={actual_sensor_id} → sensor_type={actual_sensor_type} (原始type={sensor_type})")
+                    #print(f"🔧 数据项{i}: sensor_id={actual_sensor_id} → sensor_type={actual_sensor_type} (原始type={sensor_type})")
                 else:
                     actual_sensor_type = sensor_type  # 回退到原始类型
                     print(f"⚠️ 数据项{i}: 无sensor_id，使用原始类型={sensor_type}")

@@ -1241,7 +1241,7 @@ def extract_angular_velocity_data(session):
                     
                     # 检查gyro数据是否有效
                     if gyro is None or len(gyro) != 3:
-                    continue
+                        continue
             
                     # 检查gyro数据是否为零或异常值
                     if all(abs(x) < 1e-6 for x in gyro):

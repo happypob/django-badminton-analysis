@@ -1308,7 +1308,7 @@ def extract_angular_velocity_data(session):
         for sensor_type, data_list in sensor_groups.items():
             print(f"   {sensor_type}传感器: {len(data_list)} 条记录")
         
-        # 为每个传感器提取数据并计算合角速度（直接使用原始数据，无过滤）
+        # 为每个传感器提取数据并计算合角速度（完全按照analyze_sensor_csv.py的逻辑）
         processed_sensor_groups = {}
         for sensor_type, data_list in sensor_groups.items():
             times = []
@@ -1319,8 +1319,13 @@ def extract_angular_velocity_data(session):
                     data_dict = json.loads(data.data)
                     gyro = data_dict.get('gyro', [0, 0, 0])
                     
-                    # 计算合角速度（幅值）- 按照analyze_sensor_csv.py的magnitude函数逻辑
-                    gyro_magnitude = np.sqrt(gyro[0]**2 + gyro[1]**2 + gyro[2]**2)
+                    # 按照analyze_sensor_csv.py的magnitude函数逻辑计算合角速度
+                    # magnitude函数: np.linalg.norm(arr, axis=1)
+                    gyro_array = np.array([gyro[0], gyro[1], gyro[2]], dtype=float)
+                    gyro_magnitude = np.linalg.norm(gyro_array)
+                    
+                    # 转换为度每秒 (rad/s -> deg/s)
+                    gyro_magnitude_deg = gyro_magnitude * 180.0 / np.pi
                     
                     # 使用时间戳作为时间轴
                     if data.esp32_timestamp:
@@ -1329,7 +1334,7 @@ def extract_angular_velocity_data(session):
                         time_s = data.timestamp.timestamp()
                     
                     times.append(time_s)
-                    gyro_magnitudes.append(gyro_magnitude)
+                    gyro_magnitudes.append(gyro_magnitude_deg)
                 except (json.JSONDecodeError, KeyError, AttributeError, TypeError, ValueError):
                     continue
             
@@ -1346,31 +1351,37 @@ def extract_angular_velocity_data(session):
                 'sensor_groups': {}
             }
         
-        # 计算联合时间窗口（覆盖所有传感器数据的时间段）
-        all_times = []
-        for sensor_data in processed_sensor_groups.values():
-            all_times.extend(sensor_data['times'])
+        # 计算联合时间窗口（完全按照analyze_sensor_csv.py的逻辑）
+        # 第142-152行：Compute union time window that covers all sensors
+        starts = []
+        ends = []
+        for sensor_type, sensor_data in processed_sensor_groups.items():
+            if len(sensor_data['times']) >= 1:
+                starts.append(min(sensor_data['times']))
+                ends.append(max(sensor_data['times']))
         
-        if not all_times:
+        if not starts:
+            print("❌ 没有传感器时间数据可分析")
             return {
                 'time_labels': [],
                 'sensor_groups': {}
             }
         
-        master_start = min(all_times)
-        master_end = max(all_times)
+        master_start = float(min(starts))
+        master_end = float(max(ends))
         
         print(f"📏 联合时间窗口: {master_start:.3f} - {master_end:.3f} 秒")
         print(f"   时间跨度: {master_end - master_start:.3f} 秒")
         
         # 按照analyze_sensor_csv.py的逻辑：为每个传感器生成相对于master_start的时间轴
-        # 不进行插值，直接使用原始数据点
+        # 第154-156行：Trim each sensor group's data to the union window
         aligned_sensor_data = {}
         for sensor_type, sensor_data in processed_sensor_groups.items():
             times = sensor_data['times']
             gyro_magnitudes = sensor_data['gyro_magnitudes']
             
             # 转换为相对于master_start的时间（秒），完全按照CSV逻辑
+            # 第160行和第171行：df_s["time_s"] - master_start
             relative_times = [t - master_start for t in times]
             
             aligned_sensor_data[sensor_type] = {
@@ -1381,7 +1392,7 @@ def extract_angular_velocity_data(session):
             print(f"🔧 {sensor_type} 对齐后: {len(relative_times)} 个数据点")
             print(f"   时间范围: {min(relative_times):.3f} - {max(relative_times):.3f} 秒")
             if gyro_magnitudes:
-                print(f"   角速度范围: {min(gyro_magnitudes):.3f} - {max(gyro_magnitudes):.3f} rad/s")
+                print(f"   角速度范围: {min(gyro_magnitudes):.3f} - {max(gyro_magnitudes):.3f} deg/s")
         
         return {
             'time_labels': [],  # 不再使用统一时间轴，让每个传感器使用自己的时间轴
@@ -1810,7 +1821,7 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
             print(f"⚠️ 中文字体设置失败: {str(_fe)}")
             plt.rcParams['axes.unicode_minus'] = False
         
-        # 绘制每个传感器的合角速度曲线
+        # 绘制每个传感器的合角速度曲线（完全按照analyze_sensor_csv.py第168-178行）
         print(f"🎨 开始绘制合角速度曲线，传感器数量: {len(sensor_groups)}")
         
         for sensor_type, sensor_data in sensor_groups.items():
@@ -1824,24 +1835,25 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
             if not times or not gyro_magnitudes:
                 print(f"⚠️ {sensor_type} 传感器无有效数据，跳过")
                 continue
-                
-                # 确保时间轴和数据长度一致
+            
+            # 确保时间轴和数据长度一致
             if len(times) != len(gyro_magnitudes):
                 min_len = min(len(times), len(gyro_magnitudes))
                 times = times[:min_len]
                 gyro_magnitudes = gyro_magnitudes[:min_len]
                 print(f"⚠️ {sensor_type} 数据长度不匹配，使用较短长度: {min_len}")
             
-            # 绘制合角速度曲线
-            plt.plot(times, gyro_magnitudes, label=sensor_names.get(sensor_type, sensor_type), linewidth=2)
+            # 绘制合角速度曲线（完全按照CSV第171行：plt.plot(df_s["time_s"] - master_start, df_s["gyro_mag"], label=f"ID{sid}")）
+            plt.plot(times, gyro_magnitudes, label=f"ID{sensor_type}", linewidth=2)
             print(f"✅ {sensor_type} 合角速度曲线绘制成功，数据点: {len(times)}")
             print(f"   时间范围: {min(times):.3f} - {max(times):.3f} 秒")
-            print(f"   角速度范围: {min(gyro_magnitudes):.3f} - {max(gyro_magnitudes):.3f} rad/s")
+            print(f"   角速度范围: {min(gyro_magnitudes):.3f} - {max(gyro_magnitudes):.3f} deg/s")
         
-        plt.title("多传感器合角速度随时间变化曲线", fontsize=14)
-        plt.xlabel("时间 (s) from master start", fontsize=12)
-        plt.ylabel("合角速度 (rad/s)", fontsize=12)
-        plt.legend(fontsize=10)
+        # 完全按照CSV第172-175行设置图表
+        plt.xlabel("time (s) from master start")
+        plt.ylabel("gyro magnitude (deg/s)")
+        plt.title("Gyro magnitude - all sensors (aligned to master window)")
+        plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         

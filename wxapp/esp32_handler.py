@@ -255,16 +255,12 @@ class ESP32DataHandler:
                             if i < 3:
                                 print(f"  解析时间: {hh:02d}:{mm:02d}:{ss:02d}.{mmm:03d}")
                             
-                            # 使用东八区时区
-                            import pytz
-                            beijing_tz = pytz.timezone('Asia/Shanghai')
-                            
-                            base_date = (session.start_time if session else timezone.now()).astimezone(beijing_tz).date()
+                            base_date = (session.start_time if session else timezone.now()).astimezone(timezone.get_current_timezone()).date()
                             if i < 3:
                                 print(f"  基准日期: {base_date}")
                             
                             dt_naive = datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss, mmm * 1000)
-                            aware = beijing_tz.localize(dt_naive)
+                            aware = timezone.make_aware(dt_naive, timezone.get_current_timezone())
                             
                             if i < 3:
                                 print(f"  创建的datetime: {aware}")

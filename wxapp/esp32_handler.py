@@ -276,22 +276,36 @@ class ESP32DataHandler:
                         print(f"  ⚠️ 数据项{i}没有timestamp字段")
                 
                 # 存储数据
-                sensor_data_obj = SensorData.objects.create(
-                    session=session,
-                    device_code=device_code,
-                    sensor_type=actual_sensor_type,  # 使用实际传感器类型
-                    data=json.dumps(data_item),
-                    esp32_timestamp=esp32_timestamp
-                )
-                
-                # 只显示前几条的存储信息
-                if i < 3:
-                    print(f"  ✅ 数据存储成功: ID={sensor_data_obj.id}")
-                    print(f"    存储的ESP32时间戳: {sensor_data_obj.esp32_timestamp}")
-                    print(f"    服务器时间戳: {sensor_data_obj.timestamp}")
-                    print(f"    传感器类型: {sensor_data_obj.sensor_type}")
-                    print(f"    设备编码: {sensor_data_obj.device_code}")
-                    print(f"    会话ID: {sensor_data_obj.session.id if sensor_data_obj.session else 'None'}")
+                try:
+                    print(f"  🔧 准备存储数据项{i}:")
+                    print(f"    session: {session}")
+                    print(f"    device_code: {device_code}")
+                    print(f"    sensor_type: {actual_sensor_type}")
+                    print(f"    esp32_timestamp: {esp32_timestamp}")
+                    
+                    sensor_data_obj = SensorData.objects.create(
+                        session=session,
+                        device_code=device_code,
+                        sensor_type=actual_sensor_type,  # 使用实际传感器类型
+                        data=json.dumps(data_item),
+                        esp32_timestamp=esp32_timestamp
+                    )
+                    
+                    # 只显示前几条的存储信息
+                    if i < 3:
+                        print(f"  ✅ 数据存储成功: ID={sensor_data_obj.id}")
+                        print(f"    存储的ESP32时间戳: {sensor_data_obj.esp32_timestamp}")
+                        print(f"    服务器时间戳: {sensor_data_obj.timestamp}")
+                        print(f"    传感器类型: {sensor_data_obj.sensor_type}")
+                        print(f"    设备编码: {sensor_data_obj.device_code}")
+                        print(f"    会话ID: {sensor_data_obj.session.id if sensor_data_obj.session else 'None'}")
+                        
+                except Exception as e:
+                    print(f"  ❌ 数据存储失败 for item {i}: {str(e)}")
+                    import traceback
+                    print(f"  详细错误: {traceback.format_exc()}")
+                    # 继续处理其他数据
+                    continue
                 
                 results.append({
                     'index': i,

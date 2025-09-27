@@ -315,66 +315,27 @@ class BadmintonAnalysis:
         return {'delay': delay, 'peaks': peaks}
     
     def calculate_peak_angular_velocity(self, waist, shoulder, wrist):
-        """计算三个传感器的峰值合角速度"""
+        """计算三个传感器的峰值合角速度 - 直接取整个片段的最大值"""
         peaks = {}
         
-        if waist is not None and 'gyro' in waist:
-            # 计算腰部合角速度
+        if waist is not None and 'gyro' in waist and len(waist['gyro']) > 0:
+            # 计算腰部合角速度并取最大值
             waist_mag = np.sqrt(np.sum(waist['gyro']**2, axis=1))
-            # 寻找峰值
-            waist_peaks, _ = signal.find_peaks(
-                waist_mag, 
-                height=10,
-                prominence=5,
-                distance=int(self.fs*0.1)
-            )
-            if len(waist_peaks) > 0:
-                # 获取峰值处的合角速度值
-                peak_values = waist_mag[waist_peaks]
-                peaks['waist_peak'] = float(np.max(peak_values))  # 取最大峰值
-            else:
-                # 如果没有检测到峰值，取整个序列的最大值
-                peaks['waist_peak'] = float(np.max(waist_mag))
+            peaks['waist_peak'] = float(np.max(waist_mag))
         else:
             peaks['waist_peak'] = 0.0
         
-        if shoulder is not None and 'gyro' in shoulder:
-            # 计算肩部合角速度
+        if shoulder is not None and 'gyro' in shoulder and len(shoulder['gyro']) > 0:
+            # 计算肩部合角速度并取最大值
             shoulder_mag = np.sqrt(np.sum(shoulder['gyro']**2, axis=1))
-            # 寻找峰值
-            shoulder_peaks, _ = signal.find_peaks(
-                shoulder_mag, 
-                height=8,
-                prominence=3,
-                distance=int(self.fs*0.1)
-            )
-            if len(shoulder_peaks) > 0:
-                # 获取峰值处的合角速度值
-                peak_values = shoulder_mag[shoulder_peaks]
-                peaks['shoulder_peak'] = float(np.max(peak_values))  # 取最大峰值
-            else:
-                # 如果没有检测到峰值，取整个序列的最大值
-                peaks['shoulder_peak'] = float(np.max(shoulder_mag))
+            peaks['shoulder_peak'] = float(np.max(shoulder_mag))
         else:
             peaks['shoulder_peak'] = 0.0
         
-        if wrist is not None and 'gyro' in wrist:
-            # 计算腕部合角速度
+        if wrist is not None and 'gyro' in wrist and len(wrist['gyro']) > 0:
+            # 计算腕部合角速度并取最大值
             wrist_mag = np.sqrt(np.sum(wrist['gyro']**2, axis=1))
-            # 寻找峰值
-            wrist_peaks, _ = signal.find_peaks(
-                wrist_mag, 
-                height=12,
-                prominence=5,
-                distance=int(self.fs*0.1)
-            )
-            if len(wrist_peaks) > 0:
-                # 获取峰值处的合角速度值
-                peak_values = wrist_mag[wrist_peaks]
-                peaks['wrist_peak'] = float(np.max(peak_values))  # 取最大峰值
-            else:
-                # 如果没有检测到峰值，取整个序列的最大值
-                peaks['wrist_peak'] = float(np.max(wrist_mag))
+            peaks['wrist_peak'] = float(np.max(wrist_mag))
         else:
             peaks['wrist_peak'] = 0.0
         

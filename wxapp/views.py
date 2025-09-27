@@ -1568,16 +1568,33 @@ def extract_angular_velocity_data(session):
                 
                 # 使用数据库中的ESP32时间戳（这是从JSON解析而来的）
                 if data.esp32_timestamp:
-                    time_s = data.esp32_timestamp.timestamp()
+                    # 确保使用东八区时区
                     from datetime import datetime
                     from django.utils import timezone as tz
-                    base_date = data.esp32_timestamp.astimezone(tz.get_current_timezone()).date()
-                    midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
-                    time_s = time_s - midnight.timestamp()
+                    import pytz
+                    
+                    # 转换为东八区时间
+                    if data.esp32_timestamp.tzinfo is None:
+                        # 如果没有时区信息，假设是东八区
+                        beijing_tz = pytz.timezone('Asia/Shanghai')
+                        esp32_time = beijing_tz.localize(data.esp32_timestamp.replace(tzinfo=None))
+                    else:
+                        # 转换为东八区
+                        beijing_tz = pytz.timezone('Asia/Shanghai')
+                        esp32_time = data.esp32_timestamp.astimezone(beijing_tz)
+                    
+                    # 计算从当天午夜开始的秒数
+                    base_date = esp32_time.date()
+                    midnight = beijing_tz.localize(datetime.combine(base_date, datetime.min.time()))
+                    time_s = (esp32_time - midnight).total_seconds()
                     timestamp_source = "ESP32"
+                    
                     # 只显示前几条的调试信息
                     if len(all_data) < 5:
-                        print(f"✅ 读取ESP32时间戳: {data.esp32_timestamp} -> {time_s}秒")
+                        print(f"✅ 读取ESP32时间戳: {esp32_time} (东八区)")
+                        print(f"   基准日期: {base_date}")
+                        print(f"   午夜时间: {midnight}")
+                        print(f"   计算后时间: {time_s}秒")
                         print(f"   数据ID: {data.id}, 传感器类型: {data.sensor_type}")
                 else:
                     print(f"❌ 数据点缺少ESP32时间戳，跳过: {data.id}")

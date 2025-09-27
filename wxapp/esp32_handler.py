@@ -252,9 +252,14 @@ class ESP32DataHandler:
                         # 检查是否为9位数字格式
                         if len(s) == 9 and s.isdigit():
                             hh = int(s[0:2]); mm = int(s[2:4]); ss = int(s[4:6]); mmm = int(s[6:9])
-                            base_date = (session.start_time if session else timezone.now()).astimezone(timezone.get_current_timezone()).date()
+                            # 使用东八区时区
+                            import pytz
+                            beijing_tz = pytz.timezone('Asia/Shanghai')
+                            
+                            base_date = (session.start_time if session else timezone.now()).astimezone(beijing_tz).date()
                             dt_naive = datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss, mmm * 1000)
-                            aware = timezone.make_aware(dt_naive, timezone.get_current_timezone())
+                            aware = beijing_tz.localize(dt_naive)
+                            
                             if session and aware < session.start_time - timedelta(hours=6):
                                 aware = aware + timedelta(days=1)
                             esp32_timestamp = aware

@@ -232,6 +232,7 @@ class ESP32DataHandler:
                     actual_sensor_type = SENSOR_ID_MAPPING.get(actual_sensor_id, 'unknown')
                 else:
                     actual_sensor_type = sensor_type  # 回退到原始类型
+                    print(f"⚠️ 数据项{i}: 无sensor_id，使用原始类型={sensor_type}")
                 
                 # 处理ESP32时间戳 - 只使用HHMMSSMMM格式
                 esp32_timestamp = None

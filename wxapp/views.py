@@ -1228,7 +1228,7 @@ def extract_angular_velocity_data(session):
         for sensor_type, data_list in sensor_groups.items():
             print(f"   {sensor_type}传感器: {len(data_list)} 条记录")
         
-        # 为每个传感器提取数据并计算合角速度
+        # 为每个传感器提取数据并计算合角速度（直接使用原始数据，无过滤）
         processed_sensor_groups = {}
         for sensor_type, data_list in sensor_groups.items():
             times = []
@@ -1237,22 +1237,10 @@ def extract_angular_velocity_data(session):
             for data in data_list:
                 try:
                     data_dict = json.loads(data.data)
-                    gyro = data_dict.get('gyro', None)
-                    
-                    # 检查gyro数据是否有效
-                    if gyro is None or len(gyro) != 3:
-                        continue
-            
-                    # 检查gyro数据是否为零或异常值
-                    if all(abs(x) < 1e-6 for x in gyro):
-                        continue  # 跳过零值数据
+                    gyro = data_dict.get('gyro', [0, 0, 0])
                     
                     # 计算合角速度（幅值）- 按照analyze_sensor_csv.py的magnitude函数逻辑
                     gyro_magnitude = np.sqrt(gyro[0]**2 + gyro[1]**2 + gyro[2]**2)
-                    
-                    # 过滤异常值（合角速度过大或过小）
-                    if gyro_magnitude < 1e-6 or gyro_magnitude > 1000:  # 过滤掉异常值
-                        continue
                     
                     # 使用时间戳作为时间轴
                     if data.esp32_timestamp:
@@ -1266,78 +1254,11 @@ def extract_angular_velocity_data(session):
                     continue
             
             if times and gyro_magnitudes:
-                # 进一步过滤：移除微斜的恒定值段和噪声
-                filtered_times = []
-                filtered_gyro_magnitudes = []
-                
-                # 计算数据的变化程度
-                gyro_array = np.array(gyro_magnitudes)
-                if len(gyro_array) > 1:
-                    # 计算标准差来判断数据变化程度
-                    std_dev = np.std(gyro_array)
-                    mean_val = np.mean(gyro_array)
-                    
-                    # 如果标准差太小，说明数据几乎恒定，需要更严格的过滤
-                    if std_dev < 0.01:  # 标准差小于0.01，认为是几乎恒定的
-                        print(f"⚠️ {sensor_type}: 数据变化太小 (std={std_dev:.6f})，应用严格过滤")
-                        threshold = 0.001  # 更严格的阈值
-                    else:
-                        threshold = 0.01  # 正常阈值
-                    
-                    # 使用滑动窗口检测恒定段
-                    window_size = min(10, len(gyro_array) // 10)  # 动态窗口大小
-                    if window_size < 3:
-                        window_size = 3
-                    
-                    for i, (t, g) in enumerate(zip(times, gyro_magnitudes)):
-                        # 如果是第一个点，直接添加
-                        if i == 0:
-                            filtered_times.append(t)
-                            filtered_gyro_magnitudes.append(g)
-                            continue
-                        
-                        # 检查是否与前面的值有显著差异
-                        prev_g = filtered_gyro_magnitudes[-1]
-                        if abs(g - prev_g) > threshold:
-                            filtered_times.append(t)
-                            filtered_gyro_magnitudes.append(g)
-                        else:
-                            # 检查是否在恒定段中
-                            if i >= window_size:
-                                # 检查当前窗口内的变化
-                                window_start = max(0, i - window_size)
-                                window_data = gyro_array[window_start:i+1]
-                                window_std = np.std(window_data)
-                                
-                                # 如果窗口内变化很小，跳过这个点
-                                if window_std < threshold:
-                                    continue
-                                else:
-                                    filtered_times.append(t)
-                                    filtered_gyro_magnitudes.append(g)
-                            else:
-                                # 窗口太小，使用简单阈值
-                                if abs(g - prev_g) > threshold * 2:  # 更严格的阈值
-                                    filtered_times.append(t)
-                                    filtered_gyro_magnitudes.append(g)
-                else:
-                    # 数据点太少，直接使用原始数据
-                    filtered_times = times
-                    filtered_gyro_magnitudes = gyro_magnitudes
-                
-                # 最终检查：确保有足够的变化
-                if len(filtered_times) > 1:
-                    final_std = np.std(filtered_gyro_magnitudes)
-                    if final_std > 0.001:  # 最终标准差检查
-                        processed_sensor_groups[sensor_type] = {
-                            'times': filtered_times,
-                            'gyro_magnitudes': filtered_gyro_magnitudes
-                        }
-                        print(f"✅ {sensor_type}: {len(filtered_times)} 个有效数据点 (原始: {len(times)}, 最终std: {final_std:.6f})")
-                    else:
-                        print(f"⚠️ {sensor_type}: 过滤后数据变化仍不足 (std={final_std:.6f})，跳过")
-                else:
-                    print(f"⚠️ {sensor_type}: 数据点变化不足，跳过")
+                processed_sensor_groups[sensor_type] = {
+                    'times': times,
+                    'gyro_magnitudes': gyro_magnitudes
+                }
+                print(f"✅ {sensor_type}: {len(times)} 个数据点")
         
         if not processed_sensor_groups:
             return {

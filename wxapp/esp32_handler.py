@@ -235,56 +235,43 @@ class ESP32DataHandler:
                     actual_sensor_type = sensor_type  # 回退到原始类型
                     print(f"⚠️ 数据项{i}: 无sensor_id，使用原始类型={sensor_type}")
                 
-                # 处理ESP32时间戳
+                # 处理ESP32时间戳 - 只使用HHMMSSMMM格式
                 esp32_timestamp = None
                 if 'timestamp' in data_item:
                     timestamp_str = data_item['timestamp']
-                    print(f"🔍 数据项{i}处理ESP32时间戳: {timestamp_str} (类型: {type(timestamp_str)})")
+                    # 只显示前几条的调试信息
+                    if i < 3:
+                        print(f"🔍 数据项{i}处理ESP32时间戳: {timestamp_str} (类型: {type(timestamp_str)})")
                     try:
-                        # 尝试解析ESP32时间戳（支持多种格式）
-                        if isinstance(timestamp_str, (int, float)):
-                            # Unix时间戳（毫秒）
-                            from datetime import timezone as dt_timezone
-                            esp32_timestamp = datetime.fromtimestamp(
-                                timestamp_str / 1000.0, tz=dt_timezone.utc
-                            )
-                            print(f"  Unix时间戳解析: {esp32_timestamp}")
-                        elif isinstance(timestamp_str, str):
-                            # ISO格式 或 HHMMSSmmm 字符串
-                            try:
-                                esp32_timestamp = timezone.datetime.fromisoformat(
-                                    timestamp_str.replace('Z', '+00:00')
-                                )
-                                print(f"  ISO格式解析: {esp32_timestamp}")
-                            except Exception:
-                                import re as _re
-                                from datetime import timedelta
-                                # HHMMSSmmm 9位
-                                if _re.fullmatch(r"\d{9}", timestamp_str):
-                                    hh = int(timestamp_str[0:2]); mm = int(timestamp_str[2:4]); ss = int(timestamp_str[4:6]); mmm = int(timestamp_str[6:9])
-                                    base_date = (session.start_time if session else timezone.now()).astimezone(timezone.get_current_timezone()).date()
-                                    dt_naive = datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss, mmm * 1000)
-                                    aware = timezone.make_aware(dt_naive, timezone.get_current_timezone())
-                                    if session and aware < session.start_time - timedelta(hours=6):
-                                        aware = aware + timedelta(days=1)
-                                    esp32_timestamp = aware
-                                    print(f"  HHMMSSMMM格式解析: {esp32_timestamp}")
-                                else:
-                                    print(f"  timestamp字符串不匹配HHMMSSMMM格式: {timestamp_str}")
+                        # 只使用HHMMSSMMM格式解析
+                        import re as _re
+                        from datetime import timedelta
+                        
+                        # 转换为字符串并补齐到9位
+                        s = str(int(float(timestamp_str))).zfill(9)
+                        
+                        # 检查是否为9位数字格式
+                        if len(s) == 9 and s.isdigit():
+                            hh = int(s[0:2]); mm = int(s[2:4]); ss = int(s[4:6]); mmm = int(s[6:9])
+                            base_date = (session.start_time if session else timezone.now()).astimezone(timezone.get_current_timezone()).date()
+                            dt_naive = datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss, mmm * 1000)
+                            aware = timezone.make_aware(dt_naive, timezone.get_current_timezone())
+                            if session and aware < session.start_time - timedelta(hours=6):
+                                aware = aware + timedelta(days=1)
+                            esp32_timestamp = aware
+                            if i < 3:
+                                print(f"  HHMMSSMMM格式解析: {esp32_timestamp}")
+                        else:
+                            if i < 3:
+                                print(f"  timestamp不匹配HHMMSSMMM格式: {timestamp_str}")
                     except (ValueError, TypeError) as e:
-                        print(f"❌ 时间戳解析失败 for item {i}: {e}")
-                        import traceback
-                        print(f"详细错误: {traceback.format_exc()}")
+                        if i < 3:
+                            print(f"❌ 时间戳解析失败 for item {i}: {e}")
                 else:
-                    print(f"  ⚠️ 数据项{i}没有timestamp字段")
+                    if i < 3:
+                        print(f"  ⚠️ 数据项{i}没有timestamp字段")
                 
                 # 存储数据
-                print(f"  准备存储数据:")
-                print(f"    session: {session}")
-                print(f"    device_code: {device_code}")
-                print(f"    sensor_type: {actual_sensor_type}")
-                print(f"    esp32_timestamp: {esp32_timestamp}")
-                
                 sensor_data_obj = SensorData.objects.create(
                     session=session,
                     device_code=device_code,
@@ -293,10 +280,9 @@ class ESP32DataHandler:
                     esp32_timestamp=esp32_timestamp
                 )
                 
-                print(f"  ✅ 数据存储成功:")
-                print(f"    数据ID: {sensor_data_obj.id}")
-                print(f"    存储的ESP32时间戳: {sensor_data_obj.esp32_timestamp}")
-                print(f"    服务器时间戳: {sensor_data_obj.timestamp}")
+                # 只显示前几条的存储信息
+                if i < 3:
+                    print(f"  ✅ 数据存储成功: ID={sensor_data_obj.id}, ESP32时间戳={sensor_data_obj.esp32_timestamp}")
                 
                 results.append({
                     'index': i,

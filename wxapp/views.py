@@ -1567,15 +1567,17 @@ def extract_angular_velocity_data(session):
                 time_s = 0
                 
                 # 使用数据库中的ESP32时间戳（这是从JSON解析而来的）
-                if data.esp32_timestamp:
-                    time_s = data.esp32_timestamp.timestamp()
-                    from datetime import datetime
-                    from django.utils import timezone as tz
-                    base_date = data.esp32_timestamp.astimezone(tz.get_current_timezone()).date()
-                    midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
-                    time_s = time_s - midnight.timestamp()
-                    timestamp_source = "ESP32"
-                    print(f"✅ 使用ESP32时间戳: {data.esp32_timestamp} -> {time_s}秒")
+                            if data.esp32_timestamp:
+                                time_s = data.esp32_timestamp.timestamp()
+                                from datetime import datetime
+                                from django.utils import timezone as tz
+                                base_date = data.esp32_timestamp.astimezone(tz.get_current_timezone()).date()
+                                midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
+                                time_s = time_s - midnight.timestamp()
+                                timestamp_source = "ESP32"
+                                # 只显示前几条的调试信息
+                                if len(all_data) < 5:
+                                    print(f"✅ 使用ESP32时间戳: {data.esp32_timestamp} -> {time_s}秒")
                 else:
                     print(f"❌ 数据点缺少ESP32时间戳，跳过: {data.id}")
                     continue

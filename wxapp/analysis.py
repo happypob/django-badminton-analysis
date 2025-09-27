@@ -314,6 +314,72 @@ class BadmintonAnalysis:
         
         return {'delay': delay, 'peaks': peaks}
     
+    def calculate_peak_angular_velocity(self, waist, shoulder, wrist):
+        """计算三个传感器的峰值合角速度"""
+        peaks = {}
+        
+        if waist is not None and 'gyro' in waist:
+            # 计算腰部合角速度
+            waist_mag = np.sqrt(np.sum(waist['gyro']**2, axis=1))
+            # 寻找峰值
+            waist_peaks, _ = signal.find_peaks(
+                waist_mag, 
+                height=10,
+                prominence=5,
+                distance=int(self.fs*0.1)
+            )
+            if len(waist_peaks) > 0:
+                # 获取峰值处的合角速度值
+                peak_values = waist_mag[waist_peaks]
+                peaks['waist_peak'] = float(np.max(peak_values))  # 取最大峰值
+            else:
+                # 如果没有检测到峰值，取整个序列的最大值
+                peaks['waist_peak'] = float(np.max(waist_mag))
+        else:
+            peaks['waist_peak'] = 0.0
+        
+        if shoulder is not None and 'gyro' in shoulder:
+            # 计算肩部合角速度
+            shoulder_mag = np.sqrt(np.sum(shoulder['gyro']**2, axis=1))
+            # 寻找峰值
+            shoulder_peaks, _ = signal.find_peaks(
+                shoulder_mag, 
+                height=8,
+                prominence=3,
+                distance=int(self.fs*0.1)
+            )
+            if len(shoulder_peaks) > 0:
+                # 获取峰值处的合角速度值
+                peak_values = shoulder_mag[shoulder_peaks]
+                peaks['shoulder_peak'] = float(np.max(peak_values))  # 取最大峰值
+            else:
+                # 如果没有检测到峰值，取整个序列的最大值
+                peaks['shoulder_peak'] = float(np.max(shoulder_mag))
+        else:
+            peaks['shoulder_peak'] = 0.0
+        
+        if wrist is not None and 'gyro' in wrist:
+            # 计算腕部合角速度
+            wrist_mag = np.sqrt(np.sum(wrist['gyro']**2, axis=1))
+            # 寻找峰值
+            wrist_peaks, _ = signal.find_peaks(
+                wrist_mag, 
+                height=12,
+                prominence=5,
+                distance=int(self.fs*0.1)
+            )
+            if len(wrist_peaks) > 0:
+                # 获取峰值处的合角速度值
+                peak_values = wrist_mag[wrist_peaks]
+                peaks['wrist_peak'] = float(np.max(peak_values))  # 取最大峰值
+            else:
+                # 如果没有检测到峰值，取整个序列的最大值
+                peaks['wrist_peak'] = float(np.max(wrist_mag))
+        else:
+            peaks['wrist_peak'] = 0.0
+        
+        return peaks
+    
     def calculate_rom(self, waist, shoulder, wrist):
         """计算关节活动度，对应MATLAB的calculate_rom函数"""
         rom = {}
@@ -387,7 +453,10 @@ class BadmintonAnalysis:
             # 4. 能量传递效率分析
             energy = self.energy_analysis(waist, shoulder, wrist)
             
-            # 5. 生成分析报告
+            # 5. 计算峰值合角速度
+            peak_angular_velocity = self.calculate_peak_angular_velocity(waist, shoulder, wrist)
+            
+            # 6. 生成分析报告
             analysis_result = {
                 'phase_delay': {
                     'waist_to_shoulder': phase_result['delay'][0],
@@ -396,7 +465,8 @@ class BadmintonAnalysis:
                 'energy_ratio': energy['ratio'],
                 'rom_data': rom,
                 'energy_data': energy,
-                'peaks': phase_result['peaks']
+                'peaks': phase_result['peaks'],
+                'peak_angular_velocity': peak_angular_velocity
             }
             
             return analysis_result

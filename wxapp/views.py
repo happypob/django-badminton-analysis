@@ -995,6 +995,70 @@ def get_analysis_result(request):
 
 # 新增接口：生成详细分析报告
 @csrf_exempt
+def get_sensor_peaks(request):
+    """获取三个传感器的峰值合角速度"""
+    if request.method == 'GET':
+        session_id = request.GET.get('session_id')
+        
+        if not session_id:
+            return JsonResponse({'error': 'session_id required'}, status=400)
+        
+        try:
+            session = DataCollectionSession.objects.get(id=session_id)
+            
+            # 获取该会话的所有传感器数据，优先按ESP32时间戳排序
+            esp32_data = SensorData.objects.filter(session=session, esp32_timestamp__isnull=False).order_by('esp32_timestamp')
+            if esp32_data.exists():
+                sensor_data = esp32_data
+            else:
+                # 如果没有ESP32时间戳，回退到服务器时间戳
+                sensor_data = SensorData.objects.filter(session=session).order_by('timestamp')
+            
+            if not sensor_data.exists():
+                return JsonResponse({'error': 'No sensor data found for this session'}, status=404)
+            
+            # 使用分析类计算峰值合角速度
+            analyzer = BadmintonAnalysis()
+            
+            # 预处理数据
+            waist, shoulder, wrist = analyzer.preprocess_data(sensor_data)
+            
+            # 计算峰值合角速度
+            peak_angular_velocity = analyzer.calculate_peak_angular_velocity(waist, shoulder, wrist)
+            
+            # 返回前端期望的格式
+            return JsonResponse({
+                'msg': 'sensor peaks data',
+                'waist_peak': peak_angular_velocity.get('waist_peak', 0.0),
+                'shoulder_peak': peak_angular_velocity.get('shoulder_peak', 0.0),
+                'wrist_peak': peak_angular_velocity.get('wrist_peak', 0.0),
+                'peaks': {
+                    'waist': peak_angular_velocity.get('waist_peak', 0.0),
+                    'shoulder': peak_angular_velocity.get('shoulder_peak', 0.0),
+                    'wrist': peak_angular_velocity.get('wrist_peak', 0.0)
+                },
+                'data': [
+                    peak_angular_velocity.get('waist_peak', 0.0),
+                    peak_angular_velocity.get('shoulder_peak', 0.0),
+                    peak_angular_velocity.get('wrist_peak', 0.0)
+                ],
+                'session_info': {
+                    'session_id': session.id,
+                    'start_time': session.start_time.isoformat(),
+                    'end_time': session.end_time.isoformat() if session.end_time else None,
+                    'status': session.status
+                }
+            })
+            
+        except DataCollectionSession.DoesNotExist:
+            return JsonResponse({'error': 'Session not found'}, status=404)
+        except Exception as e:
+            return JsonResponse({'error': f'Analysis failed: {str(e)}'}, status=500)
+    
+    else:
+        return JsonResponse({'error': 'GET method required'}, status=405)
+
+@csrf_exempt
 def generate_analysis_report(request):
     if request.method == 'GET':
         session_id = request.GET.get('session_id')

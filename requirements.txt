@@ -1,8 +1,32 @@
-Django>=3.2.0
-numpy>=1.21.0
-scipy>=1.7.0
-matplotlib>=3.5.0
-requests>=2.25.0
+# Django核心
+Django>=5.2.0
+djangorestframework>=3.14.0
+
+# 数据库
+psycopg2-binary>=2.9.0  # PostgreSQL支持
+django-redis>=5.2.0     # Redis缓存
+
+# WebSocket支持
 channels>=4.0.0
 channels-redis>=4.1.0
-daphne>=4.0.0 
+daphne>=4.0.0
+
+# 数据处理
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+
+# HTTP客户端
+requests>=2.31.0
+urllib3>=2.0.0
+
+# 文件处理
+scipy>=1.10.0  # 用于.mat文件处理
+
+# 生产环境
+gunicorn>=21.2.0
+whitenoise>=6.5.0  # 静态文件服务
+
+# 监控和日志
+sentry-sdk>=1.32.0  # 错误监控 

@@ -8,31 +8,38 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV DJANGO_SETTINGS_MODULE=djangodemo.settings
+ENV PYTHONPATH=/app
 
 # 安装系统依赖
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制requirements文件
 COPY requirements.txt .
 
 # 安装Python依赖
+RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install gunicorn
 
 # 复制项目文件
 COPY . .
 
 # 创建必要的目录
-RUN mkdir -p /app/staticfiles /app/media /app/logs
+RUN mkdir -p /app/staticfiles /app/images /app/logs
 
-# 收集静态文件
-RUN python manage.py collectstatic --noinput
+# 设置权限
+RUN chmod +x /app/manage.py
+
+# 创建非root用户
+RUN adduser --disabled-password --gecos '' appuser
+RUN chown -R appuser:appuser /app
+USER appuser
 
 # 暴露端口
-EXPOSE 8000
+EXPOSE 8000 8001
 
-# 启动命令
-CMD ["gunicorn", "-c", "gunicorn.conf.py", "djangodemo.wsgi:application"] 
+# 默认启动命令（可以通过docker-compose覆盖）
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"] 

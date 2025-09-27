@@ -26,21 +26,26 @@ MANIFEST
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+media/
+staticfiles/
 
-# Virtual Environment
-venv/
-.venv/
-ENV/
+# 环境变量
+.env
+.venv
 env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
 *.swo
 *~
 
-# OS
+# 操作系统
 .DS_Store
 .DS_Store?
 ._*
@@ -49,7 +54,36 @@ env/
 ehthumbs.db
 Thumbs.db
 
-# Project specific
-*.mat
+# 项目特定
 images/
-.env 
+logs/
+*.mat
+*.csv
+backup/
+temp/
+
+# 测试
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.nox/
+
+# 文档
+docs/_build/
+
+# 部署
+docker-compose.override.yml
+.dockerignore
+
+# 密钥和证书
+*.pem
+*.key
+*.crt
+*.p12
+
+# 临时文件
+*.tmp
+*.temp
+*.bak
+*.backup

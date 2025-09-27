@@ -3,41 +3,74 @@ version: '3.8'
 services:
   web:
     build: .
+    command: gunicorn -c gunicorn.conf.py djangodemo.wsgi:application
     ports:
       - "8000:8000"
     volumes:
-      - ./media:/app/media
+      - ./images:/app/images
       - ./logs:/app/logs
       - ./staticfiles:/app/staticfiles
     environment:
       - DEBUG=False
-      - ALLOWED_HOSTS=localhost,127.0.0.1,your-domain.com
       - SECRET_KEY=${SECRET_KEY}
-      - DB_NAME=${DB_NAME}
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_HOST=db
-      - DB_PORT=${DB_PORT}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/badminton_db
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       - db
+      - redis
     restart: unless-stopped
-    command: >
-      sh -c "python manage.py migrate &&
-              python manage.py collectstatic --noinput &&
-              python create_admin.py &&
-              gunicorn -c gunicorn.conf.py djangodemo.wsgi:application"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  websocket:
+    build: .
+    command: daphne -b 0.0.0.0 -p 8001 djangodemo.asgi:application
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./images:/app/images
+      - ./logs:/app/logs
+    environment:
+      - DEBUG=False
+      - SECRET_KEY=${SECRET_KEY}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/badminton_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
 
   db:
     image: postgres:15
     environment:
-      - POSTGRES_DB=${DB_NAME}
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=badminton_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
-    ports:
-      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   nginx:
     image: nginx:alpine
@@ -47,10 +80,33 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf
       - ./staticfiles:/app/staticfiles
-      - ./media:/app/media
+      - ./images:/app/images
+      - ./ssl:/etc/nginx/ssl
     depends_on:
       - web
+      - websocket
+    restart: unless-stopped
+
+  # 可选：监控服务
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
     restart: unless-stopped
 
 volumes:
-  postgres_data: 
+  postgres_data:
+  redis_data:
+  grafana_data:

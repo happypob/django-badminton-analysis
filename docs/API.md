@@ -1,4 +1,4 @@
-# 羽毛球动作分析系统 API 文档
+# API 文档
 
 ## 📋 概述
 
@@ -544,4 +544,4 @@ python test_miniprogram_api_simple.py
 python test_miniprogram_api_simple.py start_session
 python test_miniprogram_api_simple.py upload_sensor_data
 python test_miniprogram_api_simple.py upload_mat
-``` 
+```

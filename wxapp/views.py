@@ -1201,11 +1201,22 @@ def get_sensor_peaks(request):
             
             for sensor_type, sensor_data_dict in angle_data.get('sensor_groups', {}).items():
                 sensor_types.append(sensor_type)
+                print(f"🔍 处理传感器 {sensor_type}:")
+                print(f"  数据字典键: {list(sensor_data_dict.keys())}")
+                
                 if 'gyro_magnitudes' in sensor_data_dict and sensor_data_dict['gyro_magnitudes']:
-                    max_velocity = max(sensor_data_dict['gyro_magnitudes'])
+                    gyro_data = sensor_data_dict['gyro_magnitudes']
+                    print(f"  角速度数据长度: {len(gyro_data)}")
+                    print(f"  前5个值: {gyro_data[:5]}")
+                    print(f"  后5个值: {gyro_data[-5:]}")
+                    print(f"  数据范围: {min(gyro_data):.3f} ~ {max(gyro_data):.3f}")
+                    
+                    max_velocity = max(gyro_data)
                     max_angular_velocity[f'{sensor_type}_max'] = float(max_velocity)
+                    print(f"  ✅ 最大角速度: {max_velocity:.3f}")
                 else:
                     max_angular_velocity[f'{sensor_type}_max'] = 0.0
+                    print(f"  ❌ 没有角速度数据或数据为空")
             
             # 构建动态响应数据
             response_data = {
@@ -1595,6 +1606,7 @@ def extract_angular_velocity_data(session):
         
         # 2. 按时间排序（完全按照analyze_sensor_csv.py第137行）
         all_data.sort(key=lambda x: x['time_s'])
+        print(f"📊 处理后的数据总数: {len(all_data)}")
         
         # 3. 按传感器类型分组（完全按照analyze_sensor_csv.py第141行）
         processed_sensor_groups = {}
@@ -1607,6 +1619,13 @@ def extract_angular_velocity_data(session):
                 }
             processed_sensor_groups[sensor_type]['times'].append(item['time_s'])
             processed_sensor_groups[sensor_type]['gyro_magnitudes'].append(item['gyro_magnitude'])
+        
+        print(f"📊 传感器分组结果:")
+        for sensor_type, data in processed_sensor_groups.items():
+            print(f"  {sensor_type}: {len(data['gyro_magnitudes'])} 个数据点")
+            if data['gyro_magnitudes']:
+                print(f"    角速度范围: {min(data['gyro_magnitudes']):.3f} ~ {max(data['gyro_magnitudes']):.3f}")
+                print(f"    时间范围: {min(data['times']):.3f} ~ {max(data['times']):.3f} 秒")
         
         
         if not processed_sensor_groups:

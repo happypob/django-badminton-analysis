@@ -609,6 +609,11 @@ def esp32_upload_sensor_data(request):
             
             # 优先使用JSON数据中的timestamp字段
             json_timestamp = sensor_data.get('timestamp')
+            print(f"🔍 调试时间戳获取:")
+            print(f"  JSON数据中的timestamp: {json_timestamp} (类型: {type(json_timestamp)})")
+            print(f"  POST参数中的timestamp: {timestamp} (类型: {type(timestamp)})")
+            print(f"  完整JSON数据: {sensor_data}")
+            
             if json_timestamp is not None:
                 timestamp = json_timestamp
                 print(f"✅ 使用JSON中的timestamp字段: {timestamp}")
@@ -626,6 +631,10 @@ def esp32_upload_sensor_data(request):
                     # Helper: parse timestamp - 完全按照analyze_sensor_csv.py的逻辑
                     def _parse_ts(ts_val, session_obj):
                         print(f"🔍 解析时间戳: {ts_val} (类型: {type(ts_val)})")
+                        print(f"   会话对象: {session_obj}")
+                        if session_obj:
+                            print(f"   会话开始时间: {session_obj.start_time}")
+                        
                         # 优先处理HHMMSSMMM格式（与analyze_sensor_csv.py一致）
                         if isinstance(ts_val, (int, float, str)):
                             try:
@@ -665,11 +674,14 @@ def esp32_upload_sensor_data(request):
                                         aware = aware + timedelta(days=1)
                                         print(f"   跨天修正后: {aware}")
                                     
+                                    print(f"✅ 时间戳解析成功: {aware}")
                                     return aware
                                 else:
                                     print(f"   不是9位数字格式，跳过HHMMSSMMM解析")
                             except Exception as e:
                                 print(f"   HHMMSSMMM解析异常: {e}")
+                                import traceback
+                                print(f"   详细错误: {traceback.format_exc()}")
                                 pass
                         
                         # 回退到原来的Unix时间戳处理
@@ -687,8 +699,18 @@ def esp32_upload_sensor_data(request):
                         
                         return None
                     esp32_timestamp_dt = _parse_ts(timestamp, session)
-                except Exception:
+                    print(f"🔍 时间戳解析结果: {esp32_timestamp_dt}")
+                except Exception as e:
+                    print(f"❌ 时间戳解析失败: {e}")
+                    import traceback
+                    print(f"详细错误: {traceback.format_exc()}")
                     esp32_timestamp_dt = None
+            
+            print(f"🔍 准备存储数据:")
+            print(f"  session: {session}")
+            print(f"  device_code: {device_code}")
+            print(f"  sensor_type: {sensor_type}")
+            print(f"  esp32_timestamp: {esp32_timestamp_dt}")
             
             # 存储传感器数据
             sensor_data_obj = SensorData.objects.create(
@@ -698,6 +720,11 @@ def esp32_upload_sensor_data(request):
                 data=json.dumps(sensor_data),
                 esp32_timestamp=esp32_timestamp_dt
             )
+            
+            print(f"✅ 数据存储成功:")
+            print(f"  数据ID: {sensor_data_obj.id}")
+            print(f"  存储的ESP32时间戳: {sensor_data_obj.esp32_timestamp}")
+            print(f"  服务器时间戳: {sensor_data_obj.timestamp}")
             
             # 返回成功响应
             response_data = {
@@ -879,22 +906,28 @@ def esp32_batch_upload(request):
                     
                     # 处理ESP32时间戳
                     esp32_timestamp = None
+                    print(f"🔍 批量上传处理第{i}项数据:")
+                    print(f"  数据项: {data_item}")
+                    
                     if 'timestamp' in data_item:
+                        timestamp_str = data_item['timestamp']
+                        print(f"  找到timestamp字段: {timestamp_str} (类型: {type(timestamp_str)})")
                         try:
                             # 尝试解析ESP32时间戳（支持多种格式）
-                            timestamp_str = data_item['timestamp']
                             if isinstance(timestamp_str, (int, float)):
                                 # Unix时间戳（毫秒）
                                 from datetime import timezone as dt_timezone
                                 esp32_timestamp = datetime.fromtimestamp(
                                     timestamp_str / 1000.0, tz=dt_timezone.utc
                                 )
+                                print(f"  Unix时间戳解析: {esp32_timestamp}")
                             elif isinstance(timestamp_str, str):
                                 # ISO格式 或 HHMMSSmmm 字符串
                                 try:
                                     esp32_timestamp = timezone.datetime.fromisoformat(
                                         timestamp_str.replace('Z', '+00:00')
                                     )
+                                    print(f"  ISO格式解析: {esp32_timestamp}")
                                 except Exception:
                                     import re as _re
                                     from datetime import timedelta
@@ -907,11 +940,24 @@ def esp32_batch_upload(request):
                                         if session and aware < session.start_time - timedelta(hours=6):
                                             aware = aware + timedelta(days=1)
                                         esp32_timestamp = aware
+                                        print(f"  HHMMSSMMM格式解析: {esp32_timestamp}")
+                                    else:
+                                        print(f"  timestamp字符串不匹配HHMMSSMMM格式: {timestamp_str}")
                         except (ValueError, TypeError) as e:
                             # 时间戳解析失败，记录错误但继续处理
-                            print(f"Warning: Failed to parse ESP32 timestamp for item {i}: {e}")
+                            print(f"❌ 时间戳解析失败 for item {i}: {e}")
+                            import traceback
+                            print(f"详细错误: {traceback.format_exc()}")
+                    else:
+                        print(f"  ⚠️ 数据项{i}没有timestamp字段")
                     
                     # 创建传感器数据对象
+                    print(f"  准备存储数据:")
+                    print(f"    session: {session}")
+                    print(f"    device_code: {device_code}")
+                    print(f"    sensor_type: {sensor_type}")
+                    print(f"    esp32_timestamp: {esp32_timestamp}")
+                    
                     sensor_data_obj = SensorData.objects.create(
                         session=session,
                         device_code=device_code,
@@ -919,6 +965,11 @@ def esp32_batch_upload(request):
                         data=json.dumps(data_item),
                         esp32_timestamp=esp32_timestamp
                     )
+                    
+                    print(f"  ✅ 数据存储成功:")
+                    print(f"    数据ID: {sensor_data_obj.id}")
+                    print(f"    存储的ESP32时间戳: {sensor_data_obj.esp32_timestamp}")
+                    print(f"    服务器时间戳: {sensor_data_obj.timestamp}")
                     
                     created_data.append({
                         'index': i,
@@ -1460,7 +1511,27 @@ def extract_angular_velocity_data(session):
         import numpy as np
         
         # 获取所有传感器数据，只使用有ESP32时间戳的数据
-        all_sensor_data = SensorData.objects.filter(session=session, esp32_timestamp__isnull=False).order_by('esp32_timestamp')
+        print(f"🔍 检查会话 {session.id} 的传感器数据:")
+        
+        # 先检查所有数据
+        all_data = SensorData.objects.filter(session=session)
+        print(f"  总会话数据: {all_data.count()} 条")
+        
+        # 检查有ESP32时间戳的数据
+        esp32_data = SensorData.objects.filter(session=session, esp32_timestamp__isnull=False)
+        print(f"  有ESP32时间戳的数据: {esp32_data.count()} 条")
+        
+        # 检查没有ESP32时间戳的数据
+        no_esp32_data = SensorData.objects.filter(session=session, esp32_timestamp__isnull=True)
+        print(f"  没有ESP32时间戳的数据: {no_esp32_data.count()} 条")
+        
+        if no_esp32_data.exists():
+            print(f"  没有ESP32时间戳的数据示例:")
+            for i, data in enumerate(no_esp32_data[:3]):  # 只显示前3条
+                print(f"    数据{i+1}: ID={data.id}, 设备={data.device_code}, 类型={data.sensor_type}")
+                print(f"      JSON数据: {data.data[:100]}...")
+        
+        all_sensor_data = esp32_data.order_by('esp32_timestamp')
         if not all_sensor_data.exists():
             print(f"❌ 会话 {session.id} 没有ESP32时间戳数据，无法进行精确分析")
             return {

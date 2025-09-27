@@ -1387,9 +1387,35 @@ def extract_angular_velocity_data(session):
                 gyro_array = np.array([gyro[0], gyro[1], gyro[2]], dtype=float)
                 gyro_magnitude = np.linalg.norm(gyro_array)
                 
-                # 计算时间戳 - 完全按照analyze_sensor_csv.py的逻辑
-                if data.esp32_timestamp:
-                    # 使用ESP32时间戳，转换为从当天0点开始的秒数
+                # 计算时间戳 - 优先使用JSON数据中的timestamp字段
+                timestamp_source = "未知"
+                time_s = 0
+                
+                # 首先尝试从JSON数据中获取timestamp字段
+                json_timestamp = data_dict.get('timestamp')
+                if json_timestamp is not None:
+                    # 使用JSON中的timestamp字段，按照HHMMSSMMM格式解析
+                    try:
+                        # 按照analyze_sensor_csv.py的parse_timestamp_hhmmssmmm函数逻辑
+                        s = str(int(json_timestamp)).zfill(9)
+                        if len(s) == 9 and s.isdigit():
+                            hh = int(s[0:2])
+                            mm = int(s[2:4])
+                            ss = int(s[4:6])
+                            mmm = int(s[6:9])
+                            
+                            # 计算从当天0点开始的秒数（与CSV脚本完全一致）
+                            time_s = hh * 3600 + mm * 60 + ss + mmm / 1000.0
+                            timestamp_source = "JSON_HHMMSSMMM"
+                            print(f"   ✅ 使用JSON时间戳: {json_timestamp} -> {hh:02d}:{mm:02d}:{ss:02d}.{mmm:03d} -> {time_s:.3f}s")
+                        else:
+                            raise ValueError("不是9位数字格式")
+                    except Exception as e:
+                        print(f"   ❌ JSON时间戳解析失败: {e}")
+                        json_timestamp = None
+                
+                # 如果JSON时间戳解析失败，回退到ESP32时间戳
+                if json_timestamp is None and data.esp32_timestamp:
                     time_s = data.esp32_timestamp.timestamp()
                     from datetime import datetime
                     from django.utils import timezone as tz
@@ -1397,8 +1423,10 @@ def extract_angular_velocity_data(session):
                     midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
                     time_s = time_s - midnight.timestamp()
                     timestamp_source = "ESP32"
-                else:
-                    # 回退到服务器时间戳
+                    print(f"   ⚠️ 回退到ESP32时间戳: {time_s:.3f}s")
+                
+                # 最后回退到服务器时间戳
+                if json_timestamp is None and not data.esp32_timestamp:
                     time_s = data.timestamp.timestamp()
                     from datetime import datetime
                     from django.utils import timezone as tz
@@ -1406,6 +1434,7 @@ def extract_angular_velocity_data(session):
                     midnight = tz.make_aware(datetime.combine(base_date, datetime.min.time()))
                     time_s = time_s - midnight.timestamp()
                     timestamp_source = "服务器"
+                    print(f"   ⚠️ 回退到服务器时间戳: {time_s:.3f}s")
                 
                 # 添加详细调试信息（只显示前10条和后10条）
                 if debug_count < 10 or debug_count >= len(all_sensor_data) - 10:
@@ -1953,8 +1982,11 @@ def generate_multi_sensor_curve(sensor_data, time, filename="latest_multi_sensor
         print(f"🎨 开始绘制合角速度曲线，传感器数量: {len(sensor_groups)}")
         print(f"🔍 图表绘制调试信息:")
         print(f"   master_start: {master_start:.3f}")
-        print(f"   master_end: {master_end:.3f}")
-        print(f"   时间跨度: {master_end - master_start:.3f} 秒")
+        if 'master_end' in locals():
+            print(f"   master_end: {master_end:.3f}")
+            print(f"   时间跨度: {master_end - master_start:.3f} 秒")
+        else:
+            print(f"   master_end: 未定义")
         
         for sensor_type, sensor_data in sensor_groups.items():
             if not sensor_data or 'times' not in sensor_data or 'gyro_magnitudes' not in sensor_data:

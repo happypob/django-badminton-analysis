@@ -289,7 +289,9 @@ class ESP32DataHandler:
                     print(f"  ✅ 数据存储成功: ID={sensor_data_obj.id}")
                     print(f"    存储的ESP32时间戳: {sensor_data_obj.esp32_timestamp}")
                     print(f"    服务器时间戳: {sensor_data_obj.timestamp}")
-                    print(f"    数据库esp32_timestamp字段: {sensor_data_obj.esp32_timestamp}")
+                    print(f"    传感器类型: {sensor_data_obj.sensor_type}")
+                    print(f"    设备编码: {sensor_data_obj.device_code}")
+                    print(f"    会话ID: {sensor_data_obj.session.id if sensor_data_obj.session else 'None'}")
                 
                 results.append({
                     'index': i,

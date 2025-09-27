@@ -1529,6 +1529,8 @@ def extract_angular_velocity_data(session):
             print(f"  没有ESP32时间戳的数据示例:")
             for i, data in enumerate(no_esp32_data[:3]):  # 只显示前3条
                 print(f"    数据{i+1}: ID={data.id}, 设备={data.device_code}, 类型={data.sensor_type}")
+                print(f"      ESP32时间戳: {data.esp32_timestamp}")
+                print(f"      服务器时间戳: {data.timestamp}")
                 print(f"      JSON数据: {data.data[:100]}...")
         
         all_sensor_data = esp32_data.order_by('esp32_timestamp')

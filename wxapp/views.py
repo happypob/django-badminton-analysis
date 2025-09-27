@@ -999,29 +999,72 @@ def get_latest_session(request):
     """获取最新的数据收集会话"""
     if request.method == 'GET':
         try:
-            # 获取最新的会话
-            latest_session = DataCollectionSession.objects.order_by('-start_time').first()
+            print("🔍 开始获取最新会话...")
             
-            if not latest_session:
+            # 先检查模型是否可用
+            print(f"📊 DataCollectionSession 模型: {DataCollectionSession}")
+            
+            # 获取会话总数
+            total_sessions = DataCollectionSession.objects.count()
+            print(f"📊 总会话数: {total_sessions}")
+            
+            if total_sessions == 0:
+                print("⚠️ 没有找到任何会话")
                 return JsonResponse({
                     'error': 'No sessions found',
-                    'message': '暂无数据收集会话'
+                    'message': '暂无数据收集会话',
+                    'total_sessions': 0
                 }, status=404)
+            
+            # 获取最新的会话
+            latest_session = DataCollectionSession.objects.order_by('-start_time').first()
+            print(f"📊 查询结果: {latest_session}")
+            
+            if not latest_session:
+                print("⚠️ 查询结果为空")
+                return JsonResponse({
+                    'error': 'No sessions found',
+                    'message': '暂无数据收集会话',
+                    'total_sessions': total_sessions
+                }, status=404)
+            
+            print(f"✅ 找到最新会话: ID={latest_session.id}")
+            
+            # 安全地获取会话信息
+            try:
+                session_info = {
+                    'id': latest_session.id,
+                    'status': getattr(latest_session, 'status', 'unknown'),
+                    'start_time': latest_session.start_time.isoformat() if hasattr(latest_session, 'start_time') and latest_session.start_time else None,
+                    'end_time': latest_session.end_time.isoformat() if hasattr(latest_session, 'end_time') and latest_session.end_time else None,
+                    'wx_user_id': getattr(latest_session, 'wx_user_id', 'unknown')
+                }
+            except Exception as field_error:
+                print(f"⚠️ 字段访问错误: {field_error}")
+                session_info = {
+                    'id': latest_session.id,
+                    'status': 'unknown',
+                    'start_time': None,
+                    'end_time': None,
+                    'wx_user_id': 'unknown'
+                }
+            
+            print(f"📋 会话信息: {session_info}")
             
             return JsonResponse({
                 'success': True,
-                'session': {
-                    'id': latest_session.id,
-                    'status': latest_session.status,
-                    'start_time': latest_session.start_time.isoformat(),
-                    'end_time': latest_session.end_time.isoformat() if latest_session.end_time else None,
-                    'wx_user_id': latest_session.wx_user_id
-                }
+                'session': session_info,
+                'total_sessions': total_sessions
             })
             
         except Exception as e:
+            print(f"❌ 获取最新会话失败: {str(e)}")
+            import traceback
+            print(f"详细错误: {traceback.format_exc()}")
             return JsonResponse({
-                'error': f'Failed to get latest session: {str(e)}'
+                'error': f'Failed to get latest session: {str(e)}',
+                'details': str(e),
+                'traceback': traceback.format_exc()
             }, status=500)
     
     else:

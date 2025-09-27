@@ -252,22 +252,36 @@ class ESP32DataHandler:
                         # 检查是否为9位数字格式
                         if len(s) == 9 and s.isdigit():
                             hh = int(s[0:2]); mm = int(s[2:4]); ss = int(s[4:6]); mmm = int(s[6:9])
+                            if i < 3:
+                                print(f"  解析时间: {hh:02d}:{mm:02d}:{ss:02d}.{mmm:03d}")
+                            
                             # 使用东八区时区
                             import pytz
                             beijing_tz = pytz.timezone('Asia/Shanghai')
                             
                             base_date = (session.start_time if session else timezone.now()).astimezone(beijing_tz).date()
+                            if i < 3:
+                                print(f"  基准日期: {base_date}")
+                            
                             dt_naive = datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss, mmm * 1000)
                             aware = beijing_tz.localize(dt_naive)
                             
+                            if i < 3:
+                                print(f"  创建的datetime: {aware}")
+                                print(f"  会话开始时间: {session.start_time if session else 'None'}")
+                            
                             if session and aware < session.start_time - timedelta(hours=6):
                                 aware = aware + timedelta(days=1)
+                                if i < 3:
+                                    print(f"  跨天修正后: {aware}")
+                            
                             esp32_timestamp = aware
                             if i < 3:
-                                print(f"  HHMMSSMMM格式解析: {esp32_timestamp}")
+                                print(f"  ✅ 时间戳解析成功: {esp32_timestamp}")
                         else:
                             if i < 3:
-                                print(f"  timestamp不匹配HHMMSSMMM格式: {timestamp_str}")
+                                print(f"  ❌ timestamp不匹配HHMMSSMMM格式: {timestamp_str}")
+                            esp32_timestamp = None
                     except (ValueError, TypeError) as e:
                         if i < 3:
                             print(f"❌ 时间戳解析失败 for item {i}: {e}")
